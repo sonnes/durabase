@@ -10,8 +10,8 @@ import (
 	"github.com/sqldef/sqldef/v3/parser"
 	sqldefschema "github.com/sqldef/sqldef/v3/schema"
 
-	"durabase/cli/internal/schema"
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 // Result is the migration.

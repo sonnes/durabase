@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 // parseCreate returns the CHECK expressions and the table options of a

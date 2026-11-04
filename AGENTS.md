@@ -58,3 +58,14 @@ These rules apply to `packages/sdk/`.
   ../../cli/bin/durabase gen -dir src/mailbox -out src/mailbox/mailbox.gen.ts -functions src/mailbox/functions
   ```
 - Do not change a migration in `src/mailbox/migrations/` after a release. Each project that has a mailbox applies these migrations.
+
+## Release
+
+The npm packages are `@durabase/sdk` and one `@durabase/cli-<platform>-<arch>` package for each platform. They all have the version of `packages/sdk/package.json`. In this shell, `npm` can be an alias for `pnpm`. Use `command npm` for each publish.
+
+1. Set the new version in `packages/sdk/package.json`, in `version` and in each `optionalDependencies` entry.
+2. Run `node scripts/build-npm.mjs`. It builds the CLI for each platform into `dist/npm/`.
+3. Publish each CLI package: `command npm publish dist/npm/cli-<platform>-<arch>`.
+4. Run `pnpm install`, so that the lockfile gets the new versions.
+5. In `packages/sdk/`, run `command npm publish`.
+6. Tag the commit `v<version>`.

@@ -9,7 +9,9 @@ import (
 	"strings"
 )
 
-const version = "0.1.0"
+// version is the version of the npm packages. scripts/build-npm.mjs sets it
+// with -ldflags "-X main.version=...".
+var version = "0.0.1"
 
 const usage = `durabase writes migrations and types for a durabase project.
 

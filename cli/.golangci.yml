@@ -119,7 +119,7 @@ formatters:
 
   settings:
     gofumpt:
-      module-path: durabase/cli
+      module-path: github.com/sonnes/durabase/cli
       extra:
         group-params: true
         clothe-returns: true
@@ -127,7 +127,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(durabase/cli)
+        - prefix(github.com/sonnes/durabase/cli)
         - blank
         - dot
       custom-order: true

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"durabase/cli/internal/migrations"
-	"durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/migrations"
+	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
 // replay returns the migrations of the project and a database with them run.

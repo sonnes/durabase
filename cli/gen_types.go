@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"durabase/cli/internal/gen"
-	"durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/gen"
+	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
 // genTypes writes durabase.gen.ts from the migrations.

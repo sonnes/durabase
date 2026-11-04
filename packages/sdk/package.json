@@ -1,8 +1,8 @@
 {
   "name": "@durabase/sdk",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
-  "description": "The Supabase-style developer experience on Cloudflare Durable Objects.",
+  "description": "A typed database and mailbox for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.",
   "license": "MIT",
   "author": "Ravi Atluri",
   "repository": {

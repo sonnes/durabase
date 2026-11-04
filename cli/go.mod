@@ -1,4 +1,4 @@
-module durabase/cli
+module github.com/sonnes/durabase/cli
 
 go 1.26.0
 

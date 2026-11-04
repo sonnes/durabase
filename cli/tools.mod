@@ -1,4 +1,4 @@
-module durabase/cli/internal/tools
+module github.com/sonnes/durabase/cli/internal/tools
 
 go 1.26.0
 

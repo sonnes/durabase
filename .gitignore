@@ -3,3 +3,4 @@ cli/bin/
 .wrangler/
 *.tsbuildinfo
 .DS_Store
+dist/

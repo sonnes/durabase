@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 // Column is one column of a table, from PRAGMA table_xinfo.

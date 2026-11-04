@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 // Export returns the schema as SQL, in the form that sqldef reads. Each name

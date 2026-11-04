@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"durabase/cli/internal/schema"
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 const ordersV1 = `

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 const shopSQL = `

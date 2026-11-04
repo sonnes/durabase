@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"durabase/cli/internal/diff"
-	"durabase/cli/internal/migrations"
-	"durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/diff"
+	"github.com/sonnes/durabase/cli/internal/migrations"
+	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
 // dbDiff writes the migration that changes the migrations into the schema

@@ -1,10 +1,10 @@
 # durabase
 
-The developer experience of Supabase, on Cloudflare Durable Objects.
+A typed database and mailbox for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.
 
 You write SQL schema files and plain functions. durabase writes the migrations and the TypeScript types, and it owns the Durable Object. Your Worker exports the class in one line, and a client in the style of supabase-js reads and writes rows over JSON-RPC 2.0. A mailbox for each email address uses the same client.
 
-> **Status:** 0.1, before the first release. The API can change without notice.
+> **Status:** 0.0.1, before the first release. The API can change without notice.
 
 ## What You Get
 

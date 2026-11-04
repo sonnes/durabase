@@ -4,8 +4,8 @@ import (
 	"regexp"
 	"strings"
 
-	"durabase/cli/internal/schema"
-	"durabase/cli/internal/sqltext"
+	"github.com/sonnes/durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
 
 // relationships returns, for each table, the tables that it can embed:

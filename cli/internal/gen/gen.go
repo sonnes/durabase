@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"durabase/cli/internal/migrations"
-	"durabase/cli/internal/schema"
+	"github.com/sonnes/durabase/cli/internal/migrations"
+	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
 // Options sets the import paths of the output file.
