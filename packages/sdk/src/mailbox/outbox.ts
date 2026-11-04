@@ -36,7 +36,7 @@ export async function scheduleAlarm(storage: DurableObjectStorage): Promise<void
 // never zero times.
 export async function sendDue(storage: DurableObjectStorage, email: SendEmail, address: string): Promise<void> {
   const due = storage.sql
-    .exec<Row>("SELECT * FROM messages WHERE folder = 'outbox' AND due_at <= ? ORDER BY due_at, created_at LIMIT ?", Date.now(), BATCH)
+    .exec<Row>("SELECT * FROM messages WHERE folder = 'outbox' AND due_at <= ? ORDER BY due_at, created_at, rowid LIMIT ?", Date.now(), BATCH)
     .toArray();
 
   for (const row of due) {
