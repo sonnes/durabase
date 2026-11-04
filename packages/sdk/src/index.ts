@@ -5,3 +5,7 @@ export { migrate, type Migration } from "./migrate";
 export { DurabaseError, ErrorCode, type RpcError, type RpcRequest, type RpcResponse } from "./protocol";
 export { serveDb } from "./serve";
 export type { AnyDatabase, DatabaseShape, Result, TableShape, TablesShape } from "./types";
+export { mailbox, type MailboxDO, type MailboxOptions } from "./mailbox/mailbox";
+export type { Address, ReplyInput, SendInput } from "./mailbox/functions";
+export type { Database as Mailbox, Tables as MailboxTables } from "./mailbox/mailbox.gen";
+export { receiveEmail, type Attachment, type Envelope, type ReceiveOptions } from "./mailbox/receive";

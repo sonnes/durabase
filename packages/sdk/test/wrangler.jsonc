@@ -4,7 +4,14 @@
   "compatibility_date": "2026-10-15",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "DB", "class_name": "Database" }]
+    "bindings": [
+      { "name": "DB", "class_name": "Database" },
+      { "name": "MAILBOX", "class_name": "Mailbox" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Database"] }]
+  "r2_buckets": [{ "binding": "MAILBOX_FILES", "bucket_name": "mailbox-files" }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Database"] },
+    { "tag": "v2", "new_sqlite_classes": ["Mailbox"] }
+  ]
 }

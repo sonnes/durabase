@@ -51,7 +51,7 @@ func Plan(ctx context.Context, current, desired *sql.DB) (Result, error) {
 	}
 
 	for _, d := range ddls {
-		d = strings.TrimSuffix(strings.TrimSpace(d), ";")
+		d = tidy(strings.TrimSuffix(strings.TrimSpace(d), ";"))
 		if d == "" {
 			continue
 		}
@@ -66,6 +66,19 @@ func Plan(ctx context.Context, current, desired *sql.DB) (Result, error) {
 		return res, fmt.Errorf("SQLite refuses the migration: %w", err)
 	}
 	return res, nil
+}
+
+// tidy removes the space at the end of each line, and each empty line.
+// sqldef removes the comments of the schema files, but not their lines.
+func tidy(statement string) string {
+	var lines []string
+	for line := range strings.SplitSeq(statement, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func warning(statement string) string {

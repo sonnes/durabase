@@ -7,13 +7,16 @@
 import { DurableObject } from "cloudflare:workers";
 import { migrate, type Migration } from "./migrate";
 import { DurabaseError, ErrorCode, type RpcResponse } from "./protocol";
-import { collectFunctions, handle, type Context } from "./rpc";
+import { collectFunctions, handle, type Context, type Rows } from "./rpc";
 import { loadSchema, type Schema } from "./schema";
 
 export interface DatabaseOptions {
   migrations: Migration[];
   // The functions module: each export made with fn() is "fn.<export name>".
   functions?: Record<string, unknown>;
+  // "read" accepts select only, so each write goes through a function.
+  // The default is "all".
+  rows?: Rows;
 }
 
 export interface DatabaseRpc {
@@ -49,6 +52,8 @@ export function database(options: DatabaseOptions) {
         schema: this.#schema,
         functions,
         env: this.env,
+        name: this.ctx.id.name,
+        rows: options.rows ?? "all",
         migrationError: this.#migrationError,
       };
       return handle(context, body);

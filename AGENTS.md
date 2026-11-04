@@ -49,6 +49,12 @@ Write vertical code that is easy to read. More lines are better than longer line
 
 These rules apply to `packages/sdk/`.
 
-- `pnpm test` runs the tests in workerd, with the Durable Object of `test/wrangler.jsonc`.
+- `pnpm test` runs the tests in workerd, with the Durable Objects and the R2 bucket of `test/wrangler.jsonc`.
 - `pnpm typecheck` also compiles `test/types.check.ts`, which holds the type tests. A type test that must fail has `// @ts-expect-error`.
 - After a change to `test/durabase/schema/`, run the CLI to write the migration and `test/durabase.gen.ts`.
+- The SDK owns the schema of the Mailbox DO, in `src/mailbox/schema/mailbox.sql`. After a change to this file, run these commands in `packages/sdk/`:
+  ```bash
+  ../../cli/bin/durabase db diff -dir src/mailbox -f <name>
+  ../../cli/bin/durabase gen -dir src/mailbox -out src/mailbox/mailbox.gen.ts -functions src/mailbox/functions
+  ```
+- Do not change a migration in `src/mailbox/migrations/` after a release. Each project that has a mailbox applies these migrations.

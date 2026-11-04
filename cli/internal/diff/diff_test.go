@@ -121,3 +121,19 @@ create index counters_value on counters (value);`,
 		})
 	}
 }
+
+func TestPlanDropsTheLinesOfComments(t *testing.T) {
+	desired := `create table notes (
+  -- the key
+  id text primary key,
+  body text -- the text
+);`
+
+	res, err := Plan(context.Background(), open(t, ""), open(t, desired))
+	require.NoError(t, err)
+
+	require.Len(t, res.Statements, 1)
+	for line := range strings.SplitSeq(res.Statements[0], "\n") {
+		assert.NotEmpty(t, strings.TrimSpace(line), "statement: %q", res.Statements[0])
+	}
+}

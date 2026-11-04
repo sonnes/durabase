@@ -22,8 +22,14 @@ export interface Context {
   schema: Schema;
   functions: Map<string, DurabaseFunction<unknown, unknown>>;
   env: unknown;
+  // The name of the DO, from idFromName().
+  name: string | undefined;
+  // "read" accepts select only. Functions still write.
+  rows: Rows;
   migrationError?: DurabaseError;
 }
+
+export type Rows = "all" | "read";
 
 export function collectFunctions(module: Record<string, unknown> | undefined): Map<string, DurabaseFunction<unknown, unknown>> {
   const out = new Map<string, DurabaseFunction<unknown, unknown>>();
@@ -137,7 +143,12 @@ function rowCall(ctx: Context, call: Call): RowsResult {
 }
 
 function dispatch(ctx: Context, call: Call): unknown {
-  if (!call.method.startsWith(FUNCTION_PREFIX)) return rowCall(ctx, call);
+  if (!call.method.startsWith(FUNCTION_PREFIX)) {
+    if (ctx.rows === "read" && call.method !== "select") {
+      throw new DurabaseError(ErrorCode.MethodNotFound, `${call.method} is not a method of this database. Use a function.`);
+    }
+    return rowCall(ctx, call);
+  }
 
   const name = call.method.slice(FUNCTION_PREFIX.length);
   const f = ctx.functions.get(name);
@@ -176,5 +187,6 @@ function makeTx(ctx: Context): Tx {
     },
     now: Date.now(),
     env: ctx.env,
+    name: ctx.name,
   };
 }

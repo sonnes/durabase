@@ -12,8 +12,11 @@ import type { AnyDatabase, DatabaseShape, Result, TableName } from "./types";
 
 type Transport = (body: RpcBody) => Promise<RpcResponse | RpcResponse[] | undefined>;
 
+// A namespace of any durabase DO: a Database or a Mailbox.
+type AnyNamespace = DurableObjectNamespace<any>;
+
 export type Target =
-  | DurableObjectNamespace
+  | AnyNamespace
   | { url: string; headers?: Record<string, string> }
   | { fetcher: { fetch(input: RequestInfo, init?: RequestInit): Promise<Response> }; url?: string };
 
@@ -49,7 +52,7 @@ function transportFor(target: Target, options: ClientOptions): Transport {
     const t = target as { url: string; headers?: Record<string, string> };
     return post((input, init) => fetch(input, init), t.url, t.headers);
   }
-  const ns = target as DurableObjectNamespace;
+  const ns = target as unknown as DurableObjectNamespace;
   return async (body) => {
     const id = ns.idFromName(options.name ?? DEFAULT_NAME);
     const stub = ns.get(id, options.locationHint ? { locationHint: options.locationHint } : undefined);

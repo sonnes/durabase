@@ -16,6 +16,8 @@ export interface Tx<T extends TablesShape = AnyDatabase["tables"]> {
   readonly now: number;
   // The env of the Database DO.
   readonly env: unknown;
+  // The name of the DO, from idFromName().
+  readonly name: string | undefined;
 }
 
 const BRAND = "__durabase_function";

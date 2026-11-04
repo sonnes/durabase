@@ -10,12 +10,16 @@
   "bin": {
     "durabase": "./bin/durabase.js"
   },
-  "files": ["src", "bin"],
+  "files": [
+    "src",
+    "bin"
+  ],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "postal-mime": "^4.2.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
