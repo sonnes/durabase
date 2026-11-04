@@ -1,5 +1,5 @@
 {
-  "name": "@durabase/sdk",
+  "name": "@durabaseio/sdk",
   "version": "0.0.1",
   "type": "module",
   "description": "A typed database and mailbox for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.",

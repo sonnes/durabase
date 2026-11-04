@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Starts the durabase CLI binary for this platform. The binary comes from the
-// optional package @durabase/cli-<platform>-<arch>. DURABASE_BIN overrides it.
+// optional package @durabaseio/cli-<platform>-<arch>. DURABASE_BIN overrides it.
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -12,7 +12,7 @@ const exe = process.platform === "win32" ? "durabase.exe" : "durabase";
 
 function find() {
   if (process.env.DURABASE_BIN) return process.env.DURABASE_BIN;
-  const pkg = `@durabase/cli-${process.platform}-${process.arch}`;
+  const pkg = `@durabaseio/cli-${process.platform}-${process.arch}`;
   try {
     const require = createRequire(import.meta.url);
     return join(dirname(require.resolve(`${pkg}/package.json`)), "bin", exe);

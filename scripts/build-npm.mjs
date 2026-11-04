@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Builds one npm package of the durabase CLI for each platform, into
-// dist/npm/cli-<platform>-<arch>/. @durabase/sdk lists each package as an
+// dist/npm/cli-<platform>-<arch>/. @durabaseio/sdk lists each package as an
 // optional dependency, so npm installs only the package of the platform.
-// The version of each package is the version of @durabase/sdk.
+// The version of each package is the version of @durabaseio/sdk.
 //
 //   node scripts/build-npm.mjs
 //   command npm publish dist/npm/cli-darwin-arm64
@@ -29,7 +29,7 @@ const out = join(root, "dist/npm");
 rmSync(out, { recursive: true, force: true });
 
 for (const t of TARGETS) {
-  const name = `@durabase/cli-${t.platform}-${t.arch}`;
+  const name = `@durabaseio/cli-${t.platform}-${t.arch}`;
   const dir = join(out, `cli-${t.platform}-${t.arch}`);
   const exe = t.platform === "win32" ? "durabase.exe" : "durabase";
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -43,7 +43,7 @@ for (const t of TARGETS) {
   const pkg = {
     name,
     version,
-    description: `The durabase CLI for ${t.platform}-${t.arch}. Install @durabase/sdk, not this package.`,
+    description: `The durabase CLI for ${t.platform}-${t.arch}. Install @durabaseio/sdk, not this package.`,
     license: sdk.license,
     repository: { ...sdk.repository, directory: "cli" },
     os: [t.platform],

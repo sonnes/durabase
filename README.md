@@ -20,7 +20,7 @@ You write SQL schema files and plain functions. durabase writes the migrations a
 ## Install
 
 ```bash
-pnpm add @durabase/sdk
+pnpm add @durabaseio/sdk
 ```
 
 The package includes the `durabase` CLI. npm installs the binary for your platform as an optional dependency.
@@ -65,7 +65,7 @@ A function gets `tx`, which reads and writes rows with no `await`. If the functi
 
 ```ts
 // durabase/functions/index.ts
-import { createFn } from "@durabase/sdk";
+import { createFn } from "@durabaseio/sdk";
 import type { Tables } from "../../src/durabase.gen";
 
 const fn = createFn<Tables>();
@@ -82,7 +82,7 @@ A function cannot be `async`, because it runs inside `transactionSync`.
 
 ```ts
 // src/index.ts
-import { database } from "@durabase/sdk";
+import { database } from "@durabaseio/sdk";
 import { migrations } from "./durabase.gen";
 import * as functions from "../durabase/functions";
 
@@ -100,7 +100,7 @@ export const Database = database({ migrations, functions });
 ### 5. Use the Client
 
 ```ts
-import { createClient } from "@durabase/sdk";
+import { createClient } from "@durabaseio/sdk";
 import type { Database } from "./durabase.gen";
 
 const db = createClient<Database>(env.DB);
@@ -137,7 +137,7 @@ The client accepts three targets:
 ## Serve the Database over HTTP
 
 ```ts
-import { serveDb } from "@durabase/sdk";
+import { serveDb } from "@durabaseio/sdk";
 
 export default {
   fetch(request: Request, env: Env) {
@@ -154,7 +154,7 @@ export default {
 A `Mailbox` Durable Object keeps the mail of one email address. durabase owns its schema, so you write no SQL for it.
 
 ```ts
-import { mailbox, receiveEmail } from "@durabase/sdk";
+import { mailbox, receiveEmail } from "@durabaseio/sdk";
 
 export const Mailbox = mailbox();
 
@@ -176,7 +176,7 @@ The Worker needs three bindings. You can change the binding names with `mailbox(
 Send, read and reply with the database client:
 
 ```ts
-import { createClient, type Mailbox } from "@durabase/sdk";
+import { createClient, type Mailbox } from "@durabaseio/sdk";
 
 const mail = createClient<Mailbox>(env.MAILBOX, { name: "orders@example.com" });
 

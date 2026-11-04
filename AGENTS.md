@@ -1,6 +1,6 @@
 # durabase
 
-durabase brings the developer experience of Supabase to Cloudflare Durable Objects. `cli/` holds the `durabase` CLI, in Go. `packages/sdk/` holds `@durabase/sdk`, in TypeScript.
+durabase brings the developer experience of Supabase to Cloudflare Durable Objects. `cli/` holds the `durabase` CLI, in Go. `packages/sdk/` holds `@durabaseio/sdk`, in TypeScript.
 
 ## Go
 
@@ -61,7 +61,7 @@ These rules apply to `packages/sdk/`.
 
 ## Release
 
-The npm packages are `@durabase/sdk` and one `@durabase/cli-<platform>-<arch>` package for each platform. They all have the version of `packages/sdk/package.json`. In this shell, `npm` can be an alias for `pnpm`. Use `command npm` for each publish.
+The npm packages are `@durabaseio/sdk` and one `@durabaseio/cli-<platform>-<arch>` package for each platform. They all have the version of `packages/sdk/package.json`. In this shell, `npm` can be an alias for `pnpm`. Use `command npm` for each publish.
 
 1. Set the new version in `packages/sdk/package.json`, in `version` and in each `optionalDependencies` entry.
 2. Run `node scripts/build-npm.mjs`. It builds the CLI for each platform into `dist/npm/`.
