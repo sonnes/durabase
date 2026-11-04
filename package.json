@@ -1,0 +1,10 @@
+{
+  "name": "durabase",
+  "private": true,
+  "packageManager": "pnpm@10.19.0",
+  "scripts": {
+    "test": "pnpm -r test && make -C cli test",
+    "typecheck": "pnpm -r typecheck",
+    "build:cli": "make -C cli install"
+  }
+}

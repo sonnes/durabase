@@ -1,0 +1,28 @@
+{
+  "name": "@durabase/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The Supabase-style developer experience on Cloudflare Durable Objects.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "bin": {
+    "durabase": "./bin/durabase.js"
+  },
+  "files": ["src", "bin"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.151.2"
+  }
+}
