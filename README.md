@@ -1,10 +1,13 @@
 # durabase
 
+[![npm](https://img.shields.io/npm/v/@durabaseio/sdk)](https://www.npmjs.com/package/@durabaseio/sdk)
+[![license](https://img.shields.io/github/license/sonnes/durabase)](LICENSE)
+
 A typed database and mailbox for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.
 
 You write SQL schema files and plain functions. durabase writes the migrations and the TypeScript types, and it owns the Durable Object. Your Worker exports the class in one line, and a client in the style of supabase-js reads and writes rows over JSON-RPC 2.0. A mailbox for each email address uses the same client.
 
-> **Status:** 0.0.1, before the first release. The API can change without notice.
+> **Status:** 0.0.1. The API can change in each release before 1.0.
 
 ## What You Get
 
@@ -24,6 +27,13 @@ pnpm add @durabaseio/sdk
 ```
 
 The package includes the `durabase` CLI. npm installs the binary for your platform as an optional dependency.
+
+| Package | Contents |
+|---|---|
+| [`@durabaseio/sdk`](https://www.npmjs.com/package/@durabaseio/sdk) | The client, `database()`, `mailbox()`, `fn()`, and the `durabase` command |
+| `@durabaseio/cli-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`, `-win32-x64` | The CLI binary for one platform. Do not install these packages yourself. |
+
+The SDK runs in Cloudflare Workers. The Durable Objects need SQLite storage: declare each class in `new_sqlite_classes`.
 
 ## Quick Start
 
