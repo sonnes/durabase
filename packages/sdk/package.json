@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "type": "module",
   "description": "The Supabase-style developer experience on Cloudflare Durable Objects.",
+  "license": "MIT",
+  "author": "Ravi Atluri",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sonnes/durabase.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/sonnes/durabase#readme",
+  "bugs": "https://github.com/sonnes/durabase/issues",
+  "keywords": [
+    "cloudflare",
+    "durable-objects",
+    "sqlite",
+    "workers",
+    "supabase",
+    "json-rpc",
+    "email"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts"
@@ -12,11 +30,14 @@
   },
   "files": [
     "src",
-    "bin"
+    "bin",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepack": "cp ../../README.md README.md"
   },
   "dependencies": {
     "postal-mime": "^4.2.0",
@@ -28,5 +49,8 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
     "wrangler": "^4.151.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

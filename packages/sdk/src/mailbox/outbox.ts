@@ -1,6 +1,6 @@
 // The outbox of the Mailbox DO. send() and reply() write a row with the
 // folder "outbox". The alarm sends each due row through Email Service, and
-// moves it to "sent". The code comes from the Shop DO of Little Play Co.
+// moves it to "sent".
 
 import type { Tables } from "./mailbox.gen";
 

@@ -1,6 +1,5 @@
 // Applies the migrations that did not run before. The Database DO calls this
 // function in blockConcurrencyWhile, so no call runs before it ends.
-// The code comes from the Shop DO of Little Play Co.
 
 import { DurabaseError, ErrorCode } from "./protocol";
 
