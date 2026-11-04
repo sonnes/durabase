@@ -57,8 +57,11 @@ function envelope(raw: unknown): Envelope {
   return { ok: true, id: r.data.id, call: { method: r.data.method as Call["method"], params: r.data.params } };
 }
 
+// JSON drops a field with the value undefined, and JSON-RPC 2.0 needs a
+// result. A function that returns nothing gets null.
 function response(id: Id | undefined, outcome: { result: unknown } | { error: RpcError }): RpcResponse {
-  return { jsonrpc: "2.0", id: id ?? null, ...outcome } as RpcResponse;
+  if ("result" in outcome) return { jsonrpc: "2.0", id: id ?? null, result: outcome.result ?? null };
+  return { jsonrpc: "2.0", id: id ?? null, error: outcome.error };
 }
 
 // A request with no id is a notification. It gets no response.

@@ -238,6 +238,14 @@ describe("the /db route", () => {
     ]);
   });
 
+  it("answers result null for a function that returns nothing", async () => {
+    const res = await SELF.fetch("https://test/db", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "fn.noop" }),
+    });
+    expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 1, result: null });
+  });
+
   it("answers a parse error and a bad request", async () => {
     const bad = await SELF.fetch("https://test/db", { method: "POST", body: "{" });
     expect(await bad.json()).toMatchObject({ error: { code: -32700 } });

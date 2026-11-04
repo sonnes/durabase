@@ -36,5 +36,8 @@ export const fail_after_write = fn((tx, a: { id: string }) => {
 // An async function is an error: a function runs in a transaction.
 export const async_fn = fn(async () => 1);
 
+// Returns nothing. The response still has a result: null.
+export const noop = fn(() => {});
+
 // Not a function: the DO ignores it.
 export const notAFunction = 42;
