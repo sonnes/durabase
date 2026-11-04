@@ -52,5 +52,12 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "optionalDependencies": {
+    "@durabaseio/cli-darwin-arm64": "0.0.1",
+    "@durabaseio/cli-darwin-x64": "0.0.1",
+    "@durabaseio/cli-linux-arm64": "0.0.1",
+    "@durabaseio/cli-linux-x64": "0.0.1",
+    "@durabaseio/cli-win32-x64": "0.0.1"
   }
 }

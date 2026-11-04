@@ -32,6 +32,22 @@ importers:
       wrangler:
         specifier: ^4.151.2
         version: 4.157.0(@cloudflare/workers-types@5.20261104.1)
+    optionalDependencies:
+      '@durabaseio/cli-darwin-arm64':
+        specifier: 0.0.1
+        version: 0.0.1
+      '@durabaseio/cli-darwin-x64':
+        specifier: 0.0.1
+        version: 0.0.1
+      '@durabaseio/cli-linux-arm64':
+        specifier: 0.0.1
+        version: 0.0.1
+      '@durabaseio/cli-linux-x64':
+        specifier: 0.0.1
+        version: 0.0.1
+      '@durabaseio/cli-win32-x64':
+        specifier: 0.0.1
+        version: 0.0.1
 
 packages:
 
@@ -89,6 +105,31 @@ packages:
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
+
+  '@durabaseio/cli-darwin-arm64@0.0.1':
+    resolution: {integrity: sha512-sQnScD7NhLKr58d8uafWuN9G+e81MBeXelHkPLhZ8eZYP8CgYNcNLQkpzC/5v5u5fFvF2atmr3Wx+vMRvQrPOw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@durabaseio/cli-darwin-x64@0.0.1':
+    resolution: {integrity: sha512-76QZJHgKfJbM2rl3cPDUgwiwgA0V3umGGlKCpSlcY3FAa2B292t9cWrc+t51mqFddsqHn8GtQWMRqxR7jINdTw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@durabaseio/cli-linux-arm64@0.0.1':
+    resolution: {integrity: sha512-OHaJzjHiZPkFlRLwwzTnXNV4IV6NaZI5APfIZkRlrJ86XUvdOkv1gi6y6d2n0CdqdsORbndbHgYPDWWzUoUd8g==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@durabaseio/cli-linux-x64@0.0.1':
+    resolution: {integrity: sha512-ekF9fpn4exua4fu3E5DMXOnw5Gc16ePFrA+fFFxJMLoH5qql1rlynnQMAM7nbUrXio5XLZ/s63fAeOi3RALh7g==}
+    cpu: [x64]
+    os: [linux]
+
+  '@durabaseio/cli-win32-x64@0.0.1':
+    resolution: {integrity: sha512-ZxV3tV937Gza1aZhh3PNsaoQajTn4X2H2TkLqkSY40OvFfGpyTsu16rBi24Hgtca8Awqp2YKiHC9F3DwQJcusQ==}
+    cpu: [x64]
+    os: [win32]
 
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
@@ -964,6 +1005,21 @@ snapshots:
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
+
+  '@durabaseio/cli-darwin-arm64@0.0.1':
+    optional: true
+
+  '@durabaseio/cli-darwin-x64@0.0.1':
+    optional: true
+
+  '@durabaseio/cli-linux-arm64@0.0.1':
+    optional: true
+
+  '@durabaseio/cli-linux-x64@0.0.1':
+    optional: true
+
+  '@durabaseio/cli-win32-x64@0.0.1':
+    optional: true
 
   '@emnapi/runtime@1.11.3':
     dependencies:
