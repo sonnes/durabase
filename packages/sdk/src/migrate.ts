@@ -1,6 +1,7 @@
 // Applies the migrations that did not run before. The Database DO calls this
 // function in blockConcurrencyWhile, so no call runs before it ends.
 
+import { POLICIES_TABLE } from "./policy";
 import { DurabaseError, ErrorCode } from "./protocol";
 
 export interface Migration {
@@ -19,6 +20,14 @@ export function migrate(storage: DurableObjectStorage, migrations: Migration[], 
     version INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     applied_at INTEGER NOT NULL
+  )`);
+
+  // The migrations of the app write the policies into this table.
+  sql.exec(`CREATE TABLE IF NOT EXISTS ${POLICIES_TABLE} (
+    uri TEXT NOT NULL,
+    action TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    PRIMARY KEY (uri, action)
   )`);
 
   const row = sql

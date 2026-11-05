@@ -2,6 +2,7 @@
 // runs in one SQLite transaction. If a call in a batch fails, SQLite rolls
 // back the full batch.
 
+import type { Auth } from "./caller";
 import { isFunction, TxQuery, type DurabaseFunction, type Tx } from "./fn";
 import {
   DurabaseError,
@@ -14,6 +15,7 @@ import {
   type RpcError,
   type RpcResponse,
 } from "./protocol";
+import { Guard, type Policies } from "./policy";
 import type { Schema } from "./schema";
 import { insert, remove, select, toValue, update } from "./sql";
 
@@ -27,6 +29,9 @@ export interface Context {
   // "read" accepts select only. Functions still write.
   rows: Rows;
   migrationError?: DurabaseError;
+  // The caller. The service role skips the policies.
+  auth: Auth;
+  policies: Policies;
 }
 
 export type Rows = "all" | "read";
@@ -127,17 +132,18 @@ function handleBatch(ctx: Context, body: unknown[]): RpcResponse | RpcResponse[]
   return out.length ? out : undefined;
 }
 
-function rowCall(ctx: Context, call: Call): RowsResult {
+// A row call of a function has no guard: a function is code of the app.
+function rowCall(ctx: Context, call: Call, guard?: Guard): RowsResult {
   const sql = ctx.storage.sql;
   switch (call.method) {
     case "select":
-      return select(sql, ctx.schema, call.params);
+      return select(sql, ctx.schema, call.params, guard);
     case "insert":
-      return insert(sql, ctx.schema, call.params);
+      return insert(sql, ctx.schema, call.params, guard);
     case "update":
-      return update(sql, ctx.schema, call.params);
+      return update(sql, ctx.schema, call.params, guard);
     case "delete":
-      return remove(sql, ctx.schema, call.params);
+      return remove(sql, ctx.schema, call.params, guard);
   }
   throw new DurabaseError(ErrorCode.MethodNotFound, `unknown method: ${call.method}`);
 }
@@ -147,12 +153,17 @@ function dispatch(ctx: Context, call: Call): unknown {
     if (ctx.rows === "read" && call.method !== "select") {
       throw new DurabaseError(ErrorCode.MethodNotFound, `${call.method} is not a method of this database. Use a function.`);
     }
-    return rowCall(ctx, call);
+    const guard = ctx.auth.role === "service" ? undefined : new Guard(ctx.policies, ctx.schema, { auth: ctx.auth, ns: ctx.name, now: Date.now() });
+    return rowCall(ctx, call, guard);
   }
 
   const name = call.method.slice(FUNCTION_PREFIX.length);
   const f = ctx.functions.get(name);
   if (!f) throw new DurabaseError(ErrorCode.MethodNotFound, `unknown function: ${name}`);
+  // Over HTTP, a private function looks like a missing function.
+  if (ctx.auth.role !== "service" && !f.public) {
+    throw new DurabaseError(ErrorCode.MethodNotFound, `unknown function: ${name}`);
+  }
 
   let result: unknown;
   try {
@@ -188,5 +199,6 @@ function makeTx(ctx: Context): Tx {
     now: Date.now(),
     env: ctx.env,
     name: ctx.name,
+    auth: ctx.auth,
   };
 }

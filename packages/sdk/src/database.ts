@@ -5,7 +5,9 @@
 // The developer writes no Durable Object class.
 
 import { DurableObject } from "cloudflare:workers";
+import { SERVICE, type Auth } from "./caller";
 import { migrate, type Migration } from "./migrate";
+import { loadPolicies, Policies } from "./policy";
 import { DurabaseError, ErrorCode, type RpcResponse } from "./protocol";
 import { collectFunctions, handle, type Context, type Rows } from "./rpc";
 import { loadSchema, type Schema } from "./schema";
@@ -17,17 +19,25 @@ export interface DatabaseOptions {
   // "read" accepts select only, so each write goes through a function.
   // The default is "all".
   rows?: Rows;
+  // The URI scheme of the DO: "db" for a Database. The policies of the DO
+  // use it.
+  scheme?: string;
 }
 
 export interface DatabaseRpc {
+  // The call from code with a binding: the service role.
   rpc(body: unknown): Promise<RpcResponse | RpcResponse[] | undefined>;
+  // The call from serve(), for a caller over HTTP. The policies apply.
+  rpcAs(body: unknown, auth: Auth): Promise<RpcResponse | RpcResponse[] | undefined>;
 }
 
 export function database(options: DatabaseOptions) {
   const functions = collectFunctions(options.functions);
+  const scheme = options.scheme ?? "db";
 
   return class Database extends DurableObject implements DatabaseRpc {
     #schema!: Schema;
+    #policies: Policies = new Policies(scheme, []);
     #migrationError?: DurabaseError;
 
     constructor(ctx: DurableObjectState, env: unknown) {
@@ -35,6 +45,7 @@ export function database(options: DatabaseOptions) {
       ctx.blockConcurrencyWhile(async () => {
         try {
           migrate(ctx.storage, options.migrations);
+          this.#policies = loadPolicies(ctx.storage.sql, scheme);
         } catch (error) {
           this.#migrationError =
             error instanceof DurabaseError
@@ -45,8 +56,11 @@ export function database(options: DatabaseOptions) {
       });
     }
 
-    // The call from a client with a binding to this DO.
     async rpc(body: unknown): Promise<RpcResponse | RpcResponse[] | undefined> {
+      return this.rpcAs(body, SERVICE);
+    }
+
+    async rpcAs(body: unknown, auth: Auth): Promise<RpcResponse | RpcResponse[] | undefined> {
       const context: Context = {
         storage: this.ctx.storage,
         schema: this.#schema,
@@ -55,26 +69,10 @@ export function database(options: DatabaseOptions) {
         name: this.ctx.id.name,
         rows: options.rows ?? "all",
         migrationError: this.#migrationError,
+        auth,
+        policies: this.#policies,
       };
       return handle(context, body);
-    }
-
-    // The call over HTTP: POST a JSON-RPC 2.0 body.
-    async fetch(request: Request): Promise<Response> {
-      if (request.method !== "POST") {
-        return Response.json(
-          { jsonrpc: "2.0", id: null, error: { code: ErrorCode.InvalidRequest, message: "use POST with a JSON-RPC 2.0 body" } },
-          { status: 405 },
-        );
-      }
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return Response.json({ jsonrpc: "2.0", id: null, error: { code: ErrorCode.ParseError, message: "the body is not JSON" } });
-      }
-      const result = await this.rpc(body);
-      return result === undefined ? new Response(null, { status: 204 }) : Response.json(result);
     }
   };
 }

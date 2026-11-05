@@ -222,44 +222,50 @@ describe("batches", () => {
   });
 });
 
-describe("the /db route", () => {
-  it("answers JSON-RPC 2.0 over HTTP", async () => {
-    const res = await SELF.fetch("https://test/db", {
-      method: "POST",
-      body: JSON.stringify([
-        { jsonrpc: "2.0", id: 1, method: "insert", params: { table: "counters", rows: [{ name: "x", value: 1 }] } },
-        { jsonrpc: "2.0", id: 2, method: "select", params: { table: "counters", where: { name: { eq: "x" } } } },
-        { jsonrpc: "2.0", method: "select", params: { table: "counters" } },
-      ]),
-    });
-    expect(await res.json()).toEqual([
-      { jsonrpc: "2.0", id: 1, result: { count: 1 } },
-      { jsonrpc: "2.0", id: 2, result: { rows: [{ name: "x", value: 1 }], count: 1 } },
-    ]);
+describe("the /db/<namespace> route", () => {
+  const post = (body: unknown, init: RequestInit = {}) =>
+    SELF.fetch("https://test/db/http", { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body), ...init });
+
+  it("gives anon no rows of a table with no policy", async () => {
+    await createClient<Database>("db://http", env).from("counters").insert({ name: "secret", value: 1 });
+    const res = await post({ jsonrpc: "2.0", id: 1, method: "select", params: { table: "counters" } });
+    expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 1, result: { rows: [], count: 0 } });
   });
 
-  it("answers result null for a function that returns nothing", async () => {
-    const res = await SELF.fetch("https://test/db", {
-      method: "POST",
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "fn.noop" }),
+  it("refuses a write to a table with no policy", async () => {
+    const res = await post({ jsonrpc: "2.0", id: 1, method: "insert", params: { table: "counters", rows: [{ name: "x", value: 1 }] } });
+    expect(await res.json()).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32005, message: "no access to insert db://http/counters" },
     });
-    expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 1, result: null });
+  });
+
+  it("answers a public function, and hides a private function", async () => {
+    const pub = await post({ jsonrpc: "2.0", id: 1, method: "fn.whoami" });
+    expect(await pub.json()).toEqual({ jsonrpc: "2.0", id: 1, result: { role: "anon" } });
+    const priv = await post({ jsonrpc: "2.0", id: 2, method: "fn.noop" });
+    expect(await priv.json()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32601, message: "unknown function: noop" } });
   });
 
   it("answers a parse error and a bad request", async () => {
-    const bad = await SELF.fetch("https://test/db", { method: "POST", body: "{" });
+    const bad = await post("{");
     expect(await bad.json()).toMatchObject({ error: { code: -32700 } });
-    const wrong = await SELF.fetch("https://test/db", { method: "POST", body: JSON.stringify({ id: 1, method: "select" }) });
+    const wrong = await post({ id: 1, method: "select" });
     expect(await wrong.json()).toMatchObject({ id: 1, error: { code: -32600 } });
-    const get = await SELF.fetch("https://test/db");
+    const get = await SELF.fetch("https://test/db/http");
     expect(get.status).toBe(405);
   });
 
-  it("works with the client and a URL", async () => {
-    const db = createClient<Database>({ fetcher: SELF, url: "https://test/db" });
-    const { error } = await db.from("webhook_events").insert({ event_id: "e1", received_at: 1 });
-    expect(error).toBeNull();
-    const { data } = await db.from("webhook_events").select("event_id").eq("event_id", "e1").single();
-    expect(data).toEqual({ event_id: "e1" });
+  it("answers 404 for a path that is not a durabase route", async () => {
+    expect((await SELF.fetch("https://test/db/http/orders", { method: "POST", body: "{}" })).status).toBe(404);
+    expect((await SELF.fetch("https://test/db/Not_A_Name!", { method: "POST", body: "{}" })).status).toBe(404);
+    expect((await SELF.fetch("https://test/other", { method: "POST", body: "{}" })).status).toBe(404);
+  });
+
+  it("works with the client and a URI", async () => {
+    const db = createClient<Database>("db://http", undefined, { origin: "https://test", fetch: (i, init) => SELF.fetch(i, init) });
+    const { data } = await db.rpc("whoami");
+    expect(data).toEqual({ role: "anon" });
   });
 });

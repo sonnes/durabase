@@ -41,3 +41,6 @@ export const noop = fn(() => {});
 
 // Not a function: the DO ignores it.
 export const notAFunction = 42;
+
+// Returns the caller. Callers over HTTP can call it.
+export const whoami = fn.public((tx) => tx.auth);

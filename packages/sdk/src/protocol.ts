@@ -13,6 +13,8 @@ export const ErrorCode = {
   SqlError: -32002,
   FunctionError: -32003,
   RowCount: -32004,
+  // A policy refused the call.
+  Forbidden: -32005,
   InternalError: -32603,
 } as const;
 

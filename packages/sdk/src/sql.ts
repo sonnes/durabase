@@ -12,6 +12,7 @@ import {
   type RowsResult,
   type Where,
 } from "./protocol";
+import type { Action, Fragment, Guard } from "./policy";
 import { quote, type Schema, type TableInfo } from "./schema";
 
 type Row = Record<string, SqlStorageValue | unknown>;
@@ -88,12 +89,6 @@ function buildWhere(where: Where | undefined, table: TableInfo): { sql: string; 
   return { sql: parts.length ? ` WHERE ${parts.join(" AND ")}` : "", bindings };
 }
 
-function returningClause(returning: string[] | undefined, table: TableInfo): string {
-  if (!returning) return "";
-  if (returning.length === 0 || returning.includes("*")) return " RETURNING *";
-  return ` RETURNING ${returning.map((c) => quote(table.column(c))).join(", ")}`;
-}
-
 function chunks<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -101,19 +96,58 @@ function chunks<T>(items: T[], size: number): T[][] {
 }
 
 const KEY = "__durabase_key";
+const ROWID = "__durabase_rowid";
 
-export function select(sql: SqlStorage, schema: Schema, raw: unknown): RowsResult {
+// Adds the rule of a policy to a where.
+function withRule(where: Fragment, rule: Fragment | null | undefined): Fragment {
+  if (!rule) return where;
+  const sql = where.sql ? `${where.sql} AND (${rule.sql})` : ` WHERE (${rule.sql})`;
+  return { sql, bindings: [...where.bindings, ...rule.bindings] };
+}
+
+// The columns of a select. With a guard, "*" means the columns that the
+// caller can read, and a column that a policy refuses is an error.
+function selectColumns(table: TableInfo, columns: string[], guard: Guard | undefined): string[] {
+  const all = columns.length === 0 || columns.includes("*");
+  const named = columns.filter((c) => c !== "*").map((c) => table.column(c));
+  if (guard) {
+    for (const c of named) if (!guard.column(table, c, "select")) throw guard.forbidden("select", table, c);
+  }
+  if (!all) return named.map(quote);
+  if (!guard || table.columns.every((c) => guard.column(table, c, "select"))) return ["*", ...named.map(quote)];
+  return [...new Set([...table.columns.filter((c) => guard.column(table, c, "select")), ...named])].map(quote);
+}
+
+function returningColumns(returning: string[] | undefined, table: TableInfo, guard: Guard | undefined): string {
+  const cols = returning ? selectColumns(table, returning, guard) : [];
+  if (guard) cols.push(`rowid AS ${ROWID}`);
+  if (cols.length === 0) return " RETURNING 1 AS __durabase_one";
+  return ` RETURNING ${cols.join(", ")}`;
+}
+
+// After a write, each new row must pass the rule. Else the DO throws, and
+// SQLite rolls back the call.
+function checkRows(sql: SqlStorage, table: TableInfo, rows: Row[], rule: Fragment, guard: Guard, action: Action): void {
+  const ids = rows.map((r) => r[ROWID] as SqlStorageValue);
+  for (const part of chunks(ids, Math.max(1, MAX_BINDINGS - rule.bindings.length))) {
+    const q = `SELECT count(*) AS bad FROM ${quote(table.name)} WHERE rowid IN (${part.map(() => "?").join(", ")}) AND NOT coalesce((${rule.sql}), 0)`;
+    const [{ bad }] = exec(sql, q, [...part, ...rule.bindings]).toArray() as { bad: number }[];
+    if (bad > 0) throw guard.forbidden(action, table);
+  }
+  for (const r of rows) delete r[ROWID];
+}
+
+export function select(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Guard): RowsResult {
   const p = parse(SelectParams, raw);
   const table = schema.table(p.table);
+  const rule = guard?.rule(table, "select");
+  if (guard && !rule) return { rows: [], count: 0 };
 
   const plain: string[] = [];
   const embeds: { name: string; columns: string[] }[] = [];
   for (const c of p.columns ?? []) {
-    if (typeof c === "string") {
-      plain.push(c === "*" ? "*" : quote(table.column(c)));
-    } else {
-      for (const [name, columns] of Object.entries(c)) embeds.push({ name, columns });
-    }
+    if (typeof c === "string") plain.push(c);
+    else for (const [name, columns] of Object.entries(c)) embeds.push({ name, columns });
   }
 
   // An embed needs the key column of this table. It goes into the query
@@ -129,11 +163,10 @@ export function select(sql: SqlStorage, schema: Schema, raw: unknown): RowsResul
     return { ...e, rel };
   });
   const keyCols = [...new Set(relations.map((r) => r.rel.local))];
-  const cols = plain.length || relations.length === 0 ? [...plain] : [];
-  if (cols.length === 0 && relations.length === 0) cols.push("*");
+  const cols = plain.length || relations.length === 0 ? selectColumns(table, plain, guard) : [];
   keyCols.forEach((k, i) => cols.push(`${quote(k)} AS ${KEY}${i}`));
 
-  const where = buildWhere(p.where, table);
+  const where = withRule(buildWhere(p.where, table), rule);
   let query = `SELECT ${cols.join(", ")} FROM ${quote(table.name)}${where.sql}`;
   const bindings = [...where.bindings];
   if (p.order?.length) {
@@ -148,13 +181,18 @@ export function select(sql: SqlStorage, schema: Schema, raw: unknown): RowsResul
 
   for (const { name, columns, rel } of relations) {
     const other = schema.table(rel.table);
+    const otherRule = guard?.rule(other, "select");
     const keyAlias = `${KEY}${keyCols.indexOf(rel.local)}`;
     const keys = [...new Set(rows.map((r) => r[keyAlias]).filter((k) => k !== null))] as SqlStorageValue[];
-    const otherCols = columns.length ? columns.map((c) => (c === "*" ? "*" : quote(other.column(c)))) : ["*"];
+    const otherCols = selectColumns(other, columns, guard);
     const found = new Map<SqlStorageValue, Row[]>();
-    for (const part of chunks(keys, MAX_BINDINGS)) {
-      const q = `SELECT ${otherCols.join(", ")}, ${quote(rel.remote)} AS ${KEY} FROM ${quote(other.name)} WHERE ${quote(rel.remote)} IN (${part.map(() => "?").join(", ")})`;
-      for (const r of exec(sql, q, part).toArray()) {
+    const open = !guard || otherRule;
+    const room = Math.max(1, MAX_BINDINGS - (otherRule?.bindings.length ?? 0));
+    for (const part of open ? chunks(keys, room) : []) {
+      const inKeys: Fragment = { sql: ` WHERE ${quote(rel.remote)} IN (${part.map(() => "?").join(", ")})`, bindings: part };
+      const w = withRule(inKeys, otherRule);
+      const q = `SELECT ${otherCols.join(", ")}, ${quote(rel.remote)} AS ${KEY} FROM ${quote(other.name)}${w.sql}`;
+      for (const r of exec(sql, q, w.bindings).toArray()) {
         const k = r[KEY];
         delete r[KEY];
         found.set(k, [...(found.get(k) ?? []), r]);
@@ -170,12 +208,15 @@ export function select(sql: SqlStorage, schema: Schema, raw: unknown): RowsResul
   return { rows, count: rows.length };
 }
 
-export function insert(sql: SqlStorage, schema: Schema, raw: unknown): RowsResult {
+export function insert(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Guard): RowsResult {
   const p = parse(InsertParams, raw);
   const table = schema.table(p.table);
+  const rule = guard?.rule(table, "insert");
+  if (guard && !rule) throw guard.forbidden("insert", table);
   const names = [...new Set(p.rows.flatMap((r) => Object.keys(r)))].map((c) => table.column(c));
+  if (guard) for (const n of names) if (!guard.column(table, n, "insert")) throw guard.forbidden("insert", table, n);
   // RETURNING counts the rows that went in, also with OR IGNORE.
-  const returning = p.returning ? returningClause(p.returning, table) : " RETURNING 1 AS __durabase_one";
+  const returning = returningColumns(p.returning, table, guard);
   const verb = p.onConflict === "ignore" ? "INSERT OR IGNORE" : "INSERT";
 
   const out: Row[] = [];
@@ -192,25 +233,35 @@ export function insert(sql: SqlStorage, schema: Schema, raw: unknown): RowsResul
       out.push(...exec(sql, query, bindings).toArray());
     }
   }
+  if (guard && rule) checkRows(sql, table, out, rule, guard, "insert");
   return p.returning ? { rows: out, count: out.length } : { count: out.length };
 }
 
-export function update(sql: SqlStorage, schema: Schema, raw: unknown): RowsResult {
+export function update(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Guard): RowsResult {
   const p = parse(UpdateParams, raw);
   const table = schema.table(p.table);
+  const rule = guard?.rule(table, "update");
+  if (guard && !rule) throw guard.forbidden("update", table);
   const sets = Object.entries(p.set).map(([c, v]) => ({ col: table.column(c), value: toValue(v) }));
-  const where = buildWhere(p.where, table);
-  const query = `UPDATE ${quote(table.name)} SET ${sets.map((s) => `${quote(s.col)} = ?`).join(", ")}${where.sql}${p.returning ? returningClause(p.returning, table) : " RETURNING 1 AS __durabase_one"}`;
+  if (guard) for (const s of sets) if (!guard.column(table, s.col, "update")) throw guard.forbidden("update", table, s.col);
+  // The rule picks the rows that the caller can change. After the update,
+  // each row must still pass it.
+  const where = withRule(buildWhere(p.where, table), rule);
+  const query = `UPDATE ${quote(table.name)} SET ${sets.map((s) => `${quote(s.col)} = ?`).join(", ")}${where.sql}${returningColumns(p.returning, table, guard)}`;
   const rows = exec(sql, query, [...sets.map((s) => s.value), ...where.bindings]).toArray();
+  if (guard && rule) checkRows(sql, table, rows, rule, guard, "update");
   return p.returning ? { rows, count: rows.length } : { count: rows.length };
 }
 
-export function remove(sql: SqlStorage, schema: Schema, raw: unknown): RowsResult {
+export function remove(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Guard): RowsResult {
   const p = parse(DeleteParams, raw);
   const table = schema.table(p.table);
-  const where = buildWhere(p.where, table);
-  const query = `DELETE FROM ${quote(table.name)}${where.sql}${p.returning ? returningClause(p.returning, table) : " RETURNING 1 AS __durabase_one"}`;
+  const rule = guard?.rule(table, "delete");
+  if (guard && !rule) throw guard.forbidden("delete", table);
+  const where = withRule(buildWhere(p.where, table), rule);
+  const query = `DELETE FROM ${quote(table.name)}${where.sql}${returningColumns(p.returning, table, guard)}`;
   const rows = exec(sql, query, where.bindings).toArray();
+  for (const r of rows) delete r[ROWID];
   return p.returning ? { rows, count: rows.length } : { count: rows.length };
 }
 

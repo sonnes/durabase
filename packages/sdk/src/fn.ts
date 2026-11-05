@@ -2,6 +2,7 @@
 // It gets tx, which reads and writes rows with no await. If the function
 // throws, SQLite rolls back all its writes.
 
+import type { Auth } from "./caller";
 import { DurabaseError, ErrorCode, type RowsResult } from "./protocol";
 import { Query, type TxTable } from "./query";
 import type { AnyDatabase, TableName, TablesShape } from "./types";
@@ -18,12 +19,17 @@ export interface Tx<T extends TablesShape = AnyDatabase["tables"]> {
   readonly env: unknown;
   // The name of the DO, from idFromName().
   readonly name: string | undefined;
+  // The caller. tx skips the policies, so a function checks the caller itself.
+  readonly auth: Auth;
 }
 
 const BRAND = "__durabase_function";
 
 export interface DurabaseFunction<A, R> {
   readonly [BRAND]: true;
+  // A public function answers callers over HTTP. A private function answers
+  // only code with a binding to the DO.
+  readonly public: boolean;
   readonly handler: (tx: Tx<any>, args: A) => R;
 }
 
@@ -31,11 +37,17 @@ export interface DurabaseFunction<A, R> {
 //
 //   export const fn = createFn<Tables>();
 //   export default fn((tx, args: { id: string }) => tx.from("orders").select("state").eq("id", args.id).one());
+//
+// fn.public() makes a function that callers over HTTP can call.
 export function createFn<T extends TablesShape>() {
-  return <A = void, R = unknown>(handler: (tx: Tx<T>, args: A) => R): DurabaseFunction<A, R> => ({
-    [BRAND]: true,
-    handler: handler as (tx: Tx<any>, args: A) => R,
-  });
+  const make =
+    (isPublic: boolean) =>
+    <A = void, R = unknown>(handler: (tx: Tx<T>, args: A) => R): DurabaseFunction<A, R> => ({
+      [BRAND]: true,
+      public: isPublic,
+      handler: handler as (tx: Tx<any>, args: A) => R,
+    });
+  return Object.assign(make(false), { public: make(true) });
 }
 
 // fn() with no generated types.
