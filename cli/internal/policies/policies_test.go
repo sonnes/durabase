@@ -105,6 +105,27 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "files policies",
+			yaml: "files://media/avatars/*:\n  insert: { $auth.role: { eq: authenticated } }\n  delete: { owner_id: { eq: $auth.sub } }\nfiles://printables:\n  select: false\n",
+			want: []Policy{
+				{
+					URI:    "files://media/avatars/*",
+					Action: "delete",
+					Rule:   `{"owner_id":{"eq":"$auth.sub"}}`,
+				},
+				{
+					URI:    "files://media/avatars/*",
+					Action: "insert",
+					Rule:   `{"$auth.role":{"eq":"authenticated"}}`,
+				},
+				{
+					URI:    "files://printables",
+					Action: "select",
+					Rule:   "false",
+				},
+			},
+		},
+		{
 			name: "no file content",
 			yaml: "",
 			want: nil,
@@ -178,12 +199,27 @@ func TestParseErrors(t *testing.T) {
 		{
 			name: "an unknown scheme",
 			yaml: "ftp://shop/orders:\n  select: true\n",
-			want: "policies.yaml:1: ftp://shop/orders: the key must be a db:// URI of a table, such as db://shop/orders",
+			want: "policies.yaml:1: ftp://shop/orders: the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*",
 		},
 		{
 			name: "no table",
 			yaml: "db://shop:\n  select: true\n",
-			want: "policies.yaml:1: db://shop: the key must be a db:// URI of a table, such as db://shop/orders",
+			want: "policies.yaml:1: db://shop: the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*",
+		},
+		{
+			name: "a files rule with a column that objects does not have",
+			yaml: "files://media/*:\n  select: { owner: { eq: $auth.sub } }\n",
+			want: "policies.yaml:2: files://media/* select: objects has no column owner",
+		},
+		{
+			name: "a files rule with a table of the app",
+			yaml: "files://media/*:\n  select: { orders: { id: { eq: x } } }\n",
+			want: "policies.yaml:2: files://media/* select: objects has no column orders",
+		},
+		{
+			name: "a star that is not at the end",
+			yaml: "files://media/*/x:\n  select: true\n",
+			want: "policies.yaml:1: files://media/*/x: the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*",
 		},
 	}
 	for _, tt := range tests {
@@ -243,6 +279,16 @@ func TestDiff(t *testing.T) {
 			desired: []Policy{orders},
 			want: []string{
 				`DELETE FROM _durabase_policies WHERE uri = 'db://shop/products' AND action = 'select'`,
+			},
+		},
+		{
+			name: "a files policy goes to the Files DO, not to the migrations",
+			desired: []Policy{
+				{
+					URI:    "files://media/*",
+					Action: "select",
+					Rule:   "true",
+				},
 			},
 		},
 		{

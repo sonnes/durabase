@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sonnes/durabase/cli/internal/gen"
+	"github.com/sonnes/durabase/cli/internal/policies"
 	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
@@ -39,6 +40,16 @@ func genTypes(ctx context.Context, args []string) (err error) {
 	opts, err := genOptions(*out, *functions)
 	if err != nil {
 		return err
+	}
+	rules, err := policies.Load(filepath.Join(*dir, "policies.yaml"), snap)
+	if err != nil {
+		return err
+	}
+	for _, p := range rules {
+		isFiles := strings.HasPrefix(p.URI, "files://")
+		if isFiles {
+			opts.FilesPolicies = append(opts.FilesPolicies, p)
+		}
 	}
 
 	text := gen.TypeScript(snap, files, opts)

@@ -57,6 +57,34 @@ var vars = []string{
 // pattern matches db://<namespace or *>/<table>[#column].
 var pattern = regexp.MustCompile(`^db://([a-z0-9][a-z0-9_.-]*|\*)/([A-Za-z_][A-Za-z0-9_]*)(?:#([A-Za-z_][A-Za-z0-9_]*))?$`)
 
+// filesPattern matches files://<bucket>, files://<bucket>/<prefix>* and
+// files://<bucket>/<name>.
+var filesPattern = regexp.MustCompile(`^files://[a-z0-9][a-z0-9_.-]*(/[^*#?]*\*?)?$`)
+
+// filesSnap holds the objects table of the Files DO, which the SDK owns. A
+// files rule can name only its columns.
+var filesSnap = &schema.Snapshot{
+	Tables: map[string]*schema.Table{
+		"objects": {
+			Name: "objects",
+			Columns: []schema.Column{
+				{Name: "bucket"},
+				{Name: "name"},
+				{Name: "owner_id"},
+				{Name: "version"},
+				{Name: "size"},
+				{Name: "type"},
+				{Name: "etag"},
+				{Name: "metadata"},
+				{Name: "created_at"},
+				{Name: "updated_at"},
+			},
+		},
+	},
+}
+
+const keyHelp = "the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*"
+
 // Load reads the policies file at path. A project with no file has no
 // policies.
 func Load(path string, snap *schema.Snapshot) ([]Policy, error) {
@@ -118,18 +146,9 @@ func mapping(node ast.Node) ([]*ast.MappingValueNode, error) {
 
 func parseEntry(snap *schema.Snapshot, entry *ast.MappingValueNode) ([]Policy, error) {
 	uri := entry.Key.String()
-	m := pattern.FindStringSubmatch(uri)
-	if m == nil {
-		return nil, lineError(entry.Key, "%s: the key must be a db:// URI of a table, such as db://shop/orders", uri)
-	}
-
-	table := findTable(snap, m[2])
-	if table == nil {
-		return nil, lineError(entry.Key, "%s: no table %s", uri, m[2])
-	}
-	column := m[3]
-	if column != "" && table.Column(column) == nil {
-		return nil, lineError(entry.Key, "%s: %s has no column %s", uri, table.Name, column)
+	table, column, snap, err := target(snap, uri)
+	if err != nil {
+		return nil, lineError(entry.Key, "%s: %v", uri, err)
 	}
 
 	rules, err := mapping(entry.Value)
@@ -171,6 +190,28 @@ func parseEntry(snap *schema.Snapshot, entry *ast.MappingValueNode) ([]Policy, e
 		})
 	}
 	return out, nil
+}
+
+// target returns the table and the column of a key, and the schema that its
+// rules can name.
+func target(snap *schema.Snapshot, uri string) (*schema.Table, string, *schema.Snapshot, error) {
+	if filesPattern.MatchString(uri) {
+		return filesSnap.Tables["objects"], "", filesSnap, nil
+	}
+
+	m := pattern.FindStringSubmatch(uri)
+	if m == nil {
+		return nil, "", nil, errors.New(keyHelp)
+	}
+	table := findTable(snap, m[2])
+	if table == nil {
+		return nil, "", nil, fmt.Errorf("no table %s", m[2])
+	}
+	column := m[3]
+	if column != "" && table.Column(column) == nil {
+		return nil, "", nil, fmt.Errorf("%s has no column %s", table.Name, column)
+	}
+	return table, column, snap, nil
 }
 
 func findTable(snap *schema.Snapshot, name string) *schema.Table {
@@ -301,7 +342,8 @@ func (c checker) value(v any, outer *schema.Table) error {
 }
 
 // Diff returns the statements that change the db:// policies of db into
-// desired. The policies of other schemes stay.
+// desired. The policies of other schemes stay. The files:// policies go to
+// the Files DO with durabase gen, not to the migrations.
 func Diff(ctx context.Context, db *sql.DB, desired []Policy) ([]string, error) {
 	current, err := read(ctx, db)
 	if err != nil {
@@ -311,6 +353,10 @@ func Diff(ctx context.Context, db *sql.DB, desired []Policy) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	for _, p := range desired {
+		isDB := strings.HasPrefix(p.URI, "db://")
+		if !isDB {
+			continue
+		}
 		k := p.URI + " " + p.Action
 		seen[k] = true
 		rule, exists := current[k]

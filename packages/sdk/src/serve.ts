@@ -4,6 +4,7 @@
 //   POST /mail/<address>          the Mailbox DO, as JSON-RPC 2.0
 //   POST /auth/<realm>            sign-in, sign-out and the current user
 //   GET  /auth/<realm>/callback   the link of the sign-in email
+//   /files/<bucket>/<name>        downloads and uploads (files/serve.ts)
 //
 //   const answer = await serve(request, env);
 //   if (answer) return answer;
@@ -13,16 +14,18 @@
 // skips serve(), and is the service role.
 
 import type { AuthDO } from "./auth/auth";
-import { DEFAULT_SECRET } from "./auth/auth";
 import { authenticate, clearCookies, sameOrigin, sessionCookies, type Session } from "./auth/session";
 import type { DatabaseRpc } from "./database";
+import type { FilesBindings } from "./files/ops";
+import { serveFiles } from "./files/serve";
 import { ErrorCode, type Id, type RpcError, type RpcResponse } from "./protocol";
+import { DEFAULT_REALM, DEFAULT_SECRET } from "./names";
 import { BINDINGS, parseRoute, type Address } from "./uri";
 
 export interface ServeOptions {
   // The names of the bindings. The defaults are DB, MAILBOX, AUTH, FILES
   // and FILES_BUCKET.
-  bindings?: { db?: string; mail?: string; auth?: string };
+  bindings?: { db?: string; mail?: string; auth?: string } & FilesBindings;
   // The realm of the sessions: the name of the Auth DO. The default is "main".
   realm?: string;
   // The binding of the secret. The default is "DURABASE_AUTH_SECRET".
@@ -33,7 +36,6 @@ export interface ServeOptions {
 
 type Env = Record<string, unknown>;
 
-export const DEFAULT_REALM = "main";
 
 export async function serve(request: Request, env: unknown, options: ServeOptions = {}): Promise<Response | undefined> {
   const route = parseRoute(new URL(request.url).pathname);
@@ -50,7 +52,7 @@ export async function serve(request: Request, env: unknown, options: ServeOption
     case "auth":
       return serveAuth(request, route, realm, secret, authDO);
     case "files":
-      return undefined;
+      return serveFiles(request, e, route, options.bindings ?? {}, secret, () => authenticate(request, secret, authDO));
     case "db":
     case "mail": {
       if (route.path.length > 0) return undefined;

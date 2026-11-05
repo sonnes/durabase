@@ -281,6 +281,11 @@ function join(parts: Fragment[], op: "AND" | "OR"): Fragment {
   return { sql: parts.map((p) => `(${p.sql})`).join(` ${op} `), bindings: parts.flatMap((p) => p.bindings) };
 }
 
+// Compiles a rule to SQL on the rows of a table.
+export function compileRule(rule: Rule, schema: Schema, table: TableInfo, vars: Vars): Fragment {
+  return new Compiler(schema, vars).rule(rule, { table, ref: quote(table.name) }, undefined);
+}
+
 // The policies of one call, for one caller.
 export class Guard {
   constructor(
@@ -293,7 +298,7 @@ export class Guard {
   rule(table: TableInfo, action: Action): Fragment | null {
     const rule = this.policies.find(this.vars.ns, table.name, undefined, action);
     if (rule === undefined) return null;
-    return new Compiler(this.schema, this.vars).rule(rule, { table, ref: quote(table.name) }, undefined);
+    return compileRule(rule, this.schema, table, this.vars);
   }
 
   // A column is open unless a column policy says false.

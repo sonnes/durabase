@@ -7,14 +7,19 @@
     "bindings": [
       { "name": "DB", "class_name": "Database" },
       { "name": "MAILBOX", "class_name": "Mailbox" },
-      { "name": "AUTH", "class_name": "Auth" }
+      { "name": "AUTH", "class_name": "Auth" },
+      { "name": "FILES", "class_name": "Files" }
     ]
   },
-  "r2_buckets": [{ "binding": "MAILBOX_FILES", "bucket_name": "mailbox-files" }],
+  "r2_buckets": [
+    { "binding": "MAILBOX_FILES", "bucket_name": "mailbox-files" },
+    { "binding": "FILES_BUCKET", "bucket_name": "files" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Database"] },
     { "tag": "v2", "new_sqlite_classes": ["Mailbox"] },
-    { "tag": "v3", "new_sqlite_classes": ["Auth"] }
+    { "tag": "v3", "new_sqlite_classes": ["Auth"] },
+    { "tag": "v4", "new_sqlite_classes": ["Files"] }
   ],
   "vars": { "DURABASE_AUTH_SECRET": "test-secret-of-32-characters-or-more" }
 }

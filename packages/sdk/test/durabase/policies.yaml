@@ -19,3 +19,12 @@ db://*/counters:
   select:
     - { $auth.groups: { has: staff } }
     - { name: { eq: public } }
+
+files://media/avatars/*:
+  select: true
+  insert: { $auth.role: { eq: authenticated } }
+  update: { owner_id: { eq: $auth.sub } }
+  delete: { owner_id: { eq: $auth.sub } }
+
+files://printables/*:
+  select: { $auth.groups: { has: buyer } }

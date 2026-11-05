@@ -1,13 +1,20 @@
 // The test Worker: the Database DO with the test schema and functions, the
-// Mailbox DO, the Auth DO, and the durabase routes of serve().
+// Mailbox DO, the Auth DO, the Files DO, and the durabase routes of serve().
 
-import { auth, database, mailbox, serve } from "../src";
-import { migrations } from "./durabase.gen";
+import { auth, database, files, mailbox, serve } from "../src";
+import { filesPolicies, migrations } from "./durabase.gen";
 import * as functions from "./functions";
 
 export const Database = database({ migrations, functions });
 export const Mailbox = mailbox();
 export const Auth = auth({ from: "orders@shop.example", site: "https://shop.example" });
+export const Files = files({
+  buckets: {
+    media: { public: true, maxSize: 1000, types: ["image/*", "text/plain"] },
+    printables: { maxSize: 10_000, types: ["application/pdf"] },
+  },
+  policies: filesPolicies,
+});
 
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {

@@ -12,6 +12,7 @@
 import { DurabaseError, ErrorCode, FUNCTION_PREFIX, type Call, type RowsResult, type RpcBody, type RpcResponse } from "./protocol";
 import { Query, type ClientTable } from "./query";
 import type { AnyDatabase, DatabaseShape, Result, TableName } from "./types";
+import { FilesClient, type FilesClientOptions } from "./files/client";
 import { BINDINGS, parseUri, routeOf } from "./uri";
 
 type Transport = (body: RpcBody) => Promise<RpcResponse | RpcResponse[] | undefined>;
@@ -216,9 +217,20 @@ export class DurabaseClient<DB extends DatabaseShape = AnyDatabase> {
 // createClient("db://shop")                  over HTTP, to /db/shop on this site
 // createClient("db://shop", env)             with the binding DB, as the service role
 // createClient(env.DB, { name: "shop" })     with a namespace, as the service role
+// createClient("files://media")             the client of one bucket
+export function createClient(uri: `files://${string}`, env?: object, options?: FilesClientOptions): FilesClient;
 export function createClient<DB extends DatabaseShape = AnyDatabase>(uri: string, env?: object, options?: ClientOptions): DurabaseClient<DB>;
 export function createClient<DB extends DatabaseShape = AnyDatabase>(target: Exclude<Target, string>, options?: ClientOptions): DurabaseClient<DB>;
-export function createClient<DB extends DatabaseShape = AnyDatabase>(target: Target, a?: object, b?: ClientOptions): DurabaseClient<DB> {
+export function createClient<DB extends DatabaseShape = AnyDatabase>(
+  target: Target,
+  a?: object,
+  b?: ClientOptions & FilesClientOptions,
+): DurabaseClient<DB> | FilesClient {
+  if (typeof target === "string" && target.startsWith("files://")) {
+    const address = parseUri(target);
+    if (address.path.length > 0) throw new TypeError(`a files client needs a bucket URI, such as files://media, not ${target}`);
+    return new FilesClient(address.authority, a, b);
+  }
   if (typeof target === "string") return new DurabaseClient<DB>(target, b, a);
   return new DurabaseClient<DB>(target, a as ClientOptions | undefined);
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sonnes/durabase/cli/internal/migrations"
+	"github.com/sonnes/durabase/cli/internal/policies"
 	"github.com/sonnes/durabase/cli/internal/schema"
 	"github.com/sonnes/durabase/cli/internal/sqltext"
 )
@@ -108,5 +109,29 @@ func TestQuote(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			assert.Equal(t, tt.want, quote(tt.input))
 		})
+	}
+}
+
+func TestTypeScriptFilesPolicies(t *testing.T) {
+	snap := &schema.Snapshot{Tables: map[string]*schema.Table{}}
+
+	without := TypeScript(snap, nil, Options{})
+	assert.NotContains(t, without, "filesPolicies")
+
+	text := TypeScript(snap, nil, Options{
+		FilesPolicies: []policies.Policy{
+			{
+				URI:    "files://media/avatars/*",
+				Action: "insert",
+				Rule:   `{"$auth.role":{"eq":"authenticated"}}`,
+			},
+		},
+	})
+	for _, want := range []string{
+		`import type { FilePolicy, Migration } from "@durabaseio/sdk";`,
+		`export const filesPolicies: FilePolicy[] = [`,
+		`  { uri: "files://media/avatars/*", action: "insert", rule: "{\"$auth.role\":{\"eq\":\"authenticated\"}}" },`,
+	} {
+		assert.Contains(t, text, want)
 	}
 }

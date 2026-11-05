@@ -10,6 +10,7 @@
 // serve() calls these methods. The Worker signs the tokens.
 
 import { database } from "../database";
+import { DEFAULT_SECRET } from "../names";
 import { DurabaseError, ErrorCode, FUNCTION_PREFIX, type RpcError, type RpcResponse } from "../protocol";
 import { migrations } from "./auth.gen";
 import * as functions from "./functions";
@@ -40,7 +41,6 @@ export interface AuthOptions {
   email?: (m: SignInEmail) => { subject: string; text: string; html?: string };
 }
 
-export const DEFAULT_SECRET = "DURABASE_AUTH_SECRET";
 
 function defaultEmail(m: SignInEmail): { subject: string; text: string } {
   return {
