@@ -49,15 +49,17 @@ Write vertical code that is easy to read. More lines are better than longer line
 
 These rules apply to `packages/sdk/`.
 
-- `pnpm test` runs the tests in workerd, with the Durable Objects and the R2 bucket of `test/wrangler.jsonc`.
+- `pnpm test` runs the tests in workerd, with the Durable Objects and the R2 buckets of `test/wrangler.jsonc`.
 - `pnpm typecheck` also compiles `test/types.check.ts`, which holds the type tests. A type test that must fail has `// @ts-expect-error`.
-- After a change to `test/durabase/schema/`, run the CLI to write the migration and `test/durabase.gen.ts`.
-- The SDK owns the schema of the Mailbox DO, in `src/mailbox/schema/mailbox.sql`. After a change to this file, run these commands in `packages/sdk/`:
+- After a change to `test/durabase/schema/` or `test/durabase/policies.yaml`, run the CLI to write the migration and `test/durabase.gen.ts`.
+- The SDK owns the schemas of three Durable Objects: the Mailbox DO in `src/mailbox/`, the Auth DO in `src/auth/` and the Files DO in `src/files/`. After a change to a schema file, run these commands in `packages/sdk/`. Replace `<do>` with `mailbox`, `auth` or `files`:
   ```bash
-  ../../cli/bin/durabase db diff -dir src/mailbox -f <name>
-  ../../cli/bin/durabase gen -dir src/mailbox -out src/mailbox/mailbox.gen.ts -functions src/mailbox/functions
+  ../../cli/bin/durabase db diff -dir src/<do> -f <name>
+  ../../cli/bin/durabase gen -dir src/<do> -out src/<do>/<do>.gen.ts -functions src/<do>/functions
   ```
-- Do not change a migration in `src/mailbox/migrations/` after a release. Each project that has a mailbox applies these migrations.
+  The Files DO has no functions. For `files`, leave out `-functions`.
+- Do not change a migration in `src/mailbox/migrations/`, `src/auth/migrations/` or `src/files/migrations/` after a release. Each project applies these migrations.
+- The browser imports `src/client.ts`. Do not import `cloudflare:workers` into it, or into a module that it imports.
 
 ## Release
 

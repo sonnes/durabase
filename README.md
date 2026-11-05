@@ -3,9 +3,9 @@
 [![npm](https://img.shields.io/npm/v/@durabaseio/sdk)](https://www.npmjs.com/package/@durabaseio/sdk)
 [![license](https://img.shields.io/github/license/sonnes/durabase)](LICENSE)
 
-A typed database and mailbox for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.
+A typed database, mailbox, auth and file store for Cloudflare Workers, built from your SQL schema. Like Supabase, but on Cloudflare.
 
-You write SQL schema files and plain functions. durabase writes the migrations and the TypeScript types, and it owns the Durable Object. Your Worker exports the class in one line, and a client in the style of supabase-js reads and writes rows over JSON-RPC 2.0. A mailbox for each email address uses the same client.
+You write SQL schema files, plain functions and policies. durabase writes the migrations and the TypeScript types, and it owns the Durable Objects. Your Worker exports each class in one line, and a client in the style of supabase-js reads and writes rows over JSON-RPC 2.0. A customer signs in with a link or a code from one email, and the policies decide which rows and files each caller can read and write.
 
 > **Status:** 0.0.1. The API can change in each release before 1.0.
 
@@ -19,6 +19,10 @@ You write SQL schema files and plain functions. durabase writes the migrations a
 | `createClient()` | `from().select().eq()`, `insert()`, `update()`, `delete()`, `rpc()` and `batch()`, typed from your schema. |
 | `fn()` | A function that runs in the Durable Object, in one SQLite transaction. |
 | `mailbox()` | A Durable Object for one email address: the inbox, the outbox and sent. It sends with Cloudflare Email Service and receives with Email Routing. |
+| `auth()` | A Durable Object that keeps the users, the sign-in codes and the sessions. |
+| `files()` | A Durable Object with one row for each file. R2 keeps the bytes. |
+| `serve()` | The HTTP routes of the databases, the mailboxes, sign-in and the files. |
+| `policies.yaml` | The rules that decide what a caller over HTTP can read and write. |
 
 ## Install
 
@@ -30,7 +34,7 @@ The package includes the `durabase` CLI. npm installs the binary for your platfo
 
 | Package | Contents |
 |---|---|
-| [`@durabaseio/sdk`](https://www.npmjs.com/package/@durabaseio/sdk) | The client, `database()`, `mailbox()`, `fn()`, and the `durabase` command |
+| [`@durabaseio/sdk`](https://www.npmjs.com/package/@durabaseio/sdk) | The client, `database()`, `mailbox()`, `auth()`, `files()`, `serve()`, `fn()`, and the `durabase` command |
 | `@durabaseio/cli-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`, `-win32-x64` | The CLI binary for one platform. Do not install these packages yourself. |
 
 The SDK runs in Cloudflare Workers. The Durable Objects need SQLite storage: declare each class in `new_sqlite_classes`.
@@ -47,6 +51,7 @@ create table orders (
   id text primary key,
   state text not null check (state in ('pending', 'paid', 'shipped')),
   amount integer not null,
+  customer_email text not null,
   created_at integer not null
 );
 
@@ -88,6 +93,15 @@ export const pay_order = fn((tx, a: { id: string }) => {
 
 A function cannot be `async`, because it runs inside `transactionSync`.
 
+A function made with `fn()` answers only code with a binding to the Durable Object. To let callers over HTTP call a function, make it with `fn.public()`. `tx` skips the policies, so a public function must check `tx.auth` itself:
+
+```ts
+export const my_orders = fn.public((tx) => {
+  if (tx.auth.role !== "authenticated") throw new Error("sign in first");
+  return tx.from("orders").select("id", "state").eq("customer_email", tx.auth.email).all();
+});
+```
+
 ### 4. Export the Durable Object
 
 ```ts
@@ -113,7 +127,7 @@ export const Database = database({ migrations, functions });
 import { createClient } from "@durabaseio/sdk";
 import type { Database } from "./durabase.gen";
 
-const db = createClient<Database>(env.DB);
+const db = createClient<Database>("db://shop", env);
 
 const { data, error } = await db
   .from("orders")
@@ -131,33 +145,181 @@ await db.rpc("pay_order", { id: "o_1" });
 
 ```ts
 const [order, items] = await db.batch([
-  db.from("orders").insert({ id: "o_2", state: "pending", amount: 900, created_at: Date.now() }),
+  db.from("orders").insert({ id: "o_2", state: "pending", amount: 900, customer_email: "asha@example.com", created_at: Date.now() }),
   db.from("order_items").insert([{ order_id: "o_2", product_id: "bricks", quantity: 3 }]),
 ]);
 ```
 
-The client accepts three targets:
+The first argument of the client is a URI. The scheme names the Durable Object, and the name after `//` is the name of the object: `db://shop` is the Database DO with the name `shop`.
 
 | Target | Use |
 |---|---|
-| `createClient(env.DB, { name })` | In a Worker. The call goes over Workers RPC to the Durable Object with this name. The default name is `db`. |
-| `createClient({ url: "/db" })` | In a browser. The call goes to a route that `serveDb()` serves. |
-| `createClient({ fetcher })` | Through a service binding. |
+| `createClient("db://shop", env)` | In a Worker. The call goes over Workers RPC to the binding `DB`. The caller is the service role, and the policies do not apply. |
+| `createClient("db://shop")` | In a browser. The call goes to `POST /db/shop` on the site, with the session cookie. The policies apply. |
+| `createClient(env.DB, { name })` | In a Worker, with a namespace. The default name is `db`. |
+| `createClient({ fetcher, url })` | Through a service binding. |
 
-## Serve the Database over HTTP
+The scheme `mail` uses the binding `MAILBOX`, and `files` uses `FILES` and `FILES_BUCKET`. `createClient("db://shop", env, { binding })` changes the binding.
+
+## Serve the Routes over HTTP
+
+`serve()` answers each durabase route, and returns `undefined` for each other path:
 
 ```ts
-import { serveDb } from "@durabaseio/sdk";
+import { auth, files, serve } from "@durabaseio/sdk";
+
+export const Auth = auth({ from: "orders@example.com" });
 
 export default {
-  fetch(request: Request, env: Env) {
-    if (new URL(request.url).pathname === "/db") return serveDb(request, env.DB);
-    return new Response("not found", { status: 404 });
+  async fetch(request: Request, env: Env) {
+    return (await serve(request, env)) ?? new Response("not found", { status: 404 });
   },
 };
 ```
 
-> **CAUTION:** The route has no key and no policy. Anyone who can reach it can read, change and delete every row. Do not serve a database with private data on a public route.
+| Route | URI | Does |
+|---|---|---|
+| `POST /db/<name>` | `db://<name>` | Row calls and functions, as JSON-RPC 2.0 |
+| `POST /mail/<address>` | `mail://<address>` | The calls of a mailbox |
+| `POST /auth/main` | `auth://main` | `signInWithOtp`, `verifyOtp`, `getUser` and `signOut` |
+| `GET /auth/main/callback` | | The link of the sign-in email |
+| `GET`, `PUT /files/<bucket>/<name>` | `files://<bucket>/<name>` | A download and an upload |
+| `POST /files/<bucket>` | `files://<bucket>` | `list` and `remove` |
+
+A call over HTTP is `anon`, or `authenticated` after sign-in. Only the policies and the public functions are open to these callers. A table with no policy gives no rows to a select, and refuses each write.
+
+## Auth
+
+A customer signs in with a link or a 6-digit code from one email. The Mailbox DO of the `from` address sends the email.
+
+```ts
+const db = createClient<Database>("db://shop");
+
+await db.auth.signInWithOtp({ email: "asha@example.com" });
+const { data: user, error } = await db.auth.verifyOtp({ email: "asha@example.com", code: "482913" });
+await db.auth.getUser();
+await db.auth.signOut();
+```
+
+The link signs in by itself and goes to `/`, or to the path in `next`. On another device, the customer types the code.
+
+The Worker needs these bindings:
+
+| Binding | Type | Use |
+|---|---|---|
+| `AUTH` | Durable Object, class `Auth` | The users, the open codes and the sessions |
+| `MAILBOX` | Durable Object, class `Mailbox` | Sends the sign-in email |
+| `DURABASE_AUTH_SECRET` | Secret, of 32 characters or more | Signs the tokens, the code hashes and the file links |
+
+```bash
+npx wrangler secret put DURABASE_AUTH_SECRET
+```
+
+- The Worker keeps the session in two HttpOnly cookies, `__Host-durabase-access` and `__Host-durabase-refresh`. Script on the page cannot read them.
+- The access token is a JWT for 1 hour. The Worker checks it with no call to a Durable Object.
+- When the access token expires, the Worker gets a new one from the Auth DO with the refresh token. A session lasts 30 days.
+- A POST with the cookie must come from a page of the site. Else the call is `anon`.
+- A client that is not a browser can send the access token in an `Authorization: Bearer` header.
+- The Auth DO keeps only the hashes of the link and the code. A code stops after 10 minutes, or after 5 wrong tries. One address gets 5 emails in 1 hour at most.
+- `env.AUTH.get(env.AUTH.idFromName("main")).setGroups(userId, ["staff"])` sets the groups of a user. The next access token carries them.
+
+A function reads the caller from `tx.auth`:
+
+```ts
+type Auth =
+  | { role: "service" } // code with a binding
+  | { role: "anon" }
+  | { role: "authenticated"; sub: string; email: string; groups: string[] };
+```
+
+## Policies
+
+Write the policies in `durabase/policies.yaml`. Each key is the URI of a table, a column or a group of files. Each value gives a rule for `select`, `insert`, `update` or `delete`:
+
+```yaml
+db://shop/orders:
+  select: { customer_email: { eq: $auth.email } }
+
+db://shop/orders#customer:          # a column
+  select: false
+
+db://shop/order_items:
+  select:
+    orders:                         # one row of orders must match
+      id: { eq: $row.order_id }
+      customer_email: { eq: $auth.email }
+
+db://*/products:                    # each namespace
+  select: true
+
+files://media/avatars/*:
+  insert: { $auth.role: { eq: authenticated } }
+  delete: { owner_id: { eq: $auth.sub } }
+```
+
+A rule is the `where` JSON of a query, with vars in place of values:
+
+- An object: each condition must match. A list of objects: one object must match. `true` and `false` match each row and no row.
+- The vars are `$auth.role`, `$auth.sub`, `$auth.email`, `$auth.groups`, `$ns` (the name of the Durable Object) and `$now`. A var with no value, such as `$auth.email` for `anon`, matches no row.
+- `$row.<column>` names a column of the outer row, in a rule for another table.
+- `has` tests a list var: `{ $auth.groups: { has: staff } }`.
+- To write a text that starts with `$`, write `$$`.
+- A rule for a column must be `true` or `false`. A select of `*` leaves out a closed column.
+
+`npx durabase db diff` checks each table, column and var against the schema, and writes the `db://` rules into the next migration. A policy change reaches each Durable Object with the next deploy. `npx durabase gen` writes the `files://` rules as `filesPolicies`.
+
+The service role skips the policies. A function also skips them.
+
+| Call | Policy |
+|---|---|
+| A select | The rule filters the rows. With no rule, the result is empty. |
+| An insert | Each new row must match the rule. |
+| An update | The rule picks the rows. Each changed row must still match the rule. |
+| A delete | The rule picks the rows. |
+
+If a write does not match its rule, the call fails with `-32005`, and SQLite rolls back the call or the batch.
+
+## Files
+
+One `Files` Durable Object keeps a row for each file of all buckets. One R2 bucket keeps the bytes, at the key `<bucket>/<name>/<version>`. Each upload writes a new version.
+
+```ts
+import { files } from "@durabaseio/sdk";
+import { filesPolicies } from "./durabase.gen";
+
+export const Files = files({
+  buckets: {
+    media: { public: true, maxSize: 5_000_000, types: ["image/*"] },
+    printables: { maxSize: 50_000_000, types: ["application/pdf"] },
+  },
+  policies: filesPolicies,
+});
+```
+
+| Binding | Type | Use |
+|---|---|---|
+| `FILES` | Durable Object, class `Files` | The `objects` table |
+| `FILES_BUCKET` | R2 bucket | The bytes |
+
+```ts
+const media = createClient("files://media"); // in the browser
+
+await media.upload("avatars/asha.jpg", file);                    // the insert rule
+await media.upload("avatars/asha.jpg", file, { upsert: true });  // the update rule
+const { data } = await media.list("avatars/");                   // the select rule
+await media.remove(["avatars/asha.jpg"]);                        // the delete rule
+media.getPublicUrl("products/1.jpg");                            // /files/media/products/1.jpg
+
+// In the Worker, as the service role:
+const printables = createClient("files://printables", env);
+const { data: link } = await printables.createSignedUrl("atlas/india.pdf", { expiresIn: 7 * 24 * 3600 });
+```
+
+- A download from a public bucket needs no policy. A URL with the version needs no call to the Durable Object, and a cache can keep it for 1 year.
+- A signed link needs no call to the Durable Object. A new upload or a remove of the file stops the link.
+- A download of a private file needs the `select` rule.
+- Each download has the headers `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so an uploaded HTML file cannot run script on the site.
+- An upload to a name that exists fails, unless `upsert` is true. The bucket refuses a file over `maxSize`, or of a type that is not in `types`.
 
 ## Mailbox
 
@@ -239,12 +401,14 @@ The Durable Object accepts only the table and column names of its schema. Each v
 | -32002 | SQLite refused the statement. |
 | -32003 | The function threw an error. |
 | -32004 | `single()` got no row, or more than one row. |
+| -32005 | A policy refused the call. |
 | -32603 | An internal error. |
 
 ## Limits
 
 - `db diff` uses [sqldef](https://github.com/sqldef/sqldef). SQLite cannot change a CHECK constraint or the type of a column with `ALTER TABLE`, and `db diff` writes no migration for these changes.
-- There are no API keys and no row policies.
+- There are no API keys. Code with a binding is the service role.
+- An email scanner that opens the sign-in link uses up the link and the code of that email. The customer must then ask for a new email.
 - A Durable Object holds one SQLite database. One name is one database.
 
 ## Development
