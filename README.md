@@ -15,7 +15,7 @@ You write SQL schema files, plain functions and policies. durabase writes the mi
 |---|---|
 | `database()` | A Durable Object with SQLite. It applies your migrations on the first call after a deploy, and answers JSON-RPC 2.0 calls for rows and functions. |
 | `durabase db diff` | Compares your schema files with your migrations, and writes the next migration. |
-| `durabase gen` | Writes the row types, the function types and the migrations into one TypeScript file. |
+| `durabase gen` | Writes the row types, the function types, the migrations and the policies into one TypeScript file. |
 | `createClient()` | `from().select().eq()`, `insert()`, `update()`, `delete()`, `rpc()` and `batch()`, typed from your schema. |
 | `fn()` | A function that runs in the Durable Object, in one SQLite transaction. |
 | `mailbox()` | A Durable Object for one email address: the inbox, the outbox and sent. It sends with Cloudflare Email Service and receives with Email Routing. |
@@ -96,11 +96,15 @@ A function cannot be `async`, because it runs inside `transactionSync`.
 A function made with `fn()` answers only code with a binding to the Durable Object. To let callers over HTTP call a function, make it with `fn.public()`. `tx` skips the policies, so a public function must check `tx.auth` itself:
 
 ```ts
+import { DurabaseError, ErrorCode } from "@durabaseio/sdk";
+
 export const my_orders = fn.public((tx) => {
-  if (tx.auth.role !== "authenticated") throw new Error("sign in first");
+  if (tx.auth.role !== "authenticated") throw new DurabaseError(ErrorCode.Forbidden, "sign in first");
   return tx.from("orders").select("id", "state").eq("customer_email", tx.auth.email).all();
 });
 ```
+
+A `DurabaseError` keeps its code, here `-32005`. Each other error gives `-32003`.
 
 ### 4. Export the Durable Object
 
@@ -127,7 +131,7 @@ export const Database = database({ migrations, functions });
 import { createClient } from "@durabaseio/sdk";
 import type { Database } from "./durabase.gen";
 
-const db = createClient<Database>("db://shop", env);
+const db = createClient<Database>("db://shop", { env });
 
 const { data, error } = await db
   .from("orders")
@@ -154,12 +158,12 @@ The first argument of the client is a URI. The scheme names the Durable Object, 
 
 | Target | Use |
 |---|---|
-| `createClient("db://shop", env)` | In a Worker. The call goes over Workers RPC to the binding `DB`. The caller is the service role, and the policies do not apply. |
+| `createClient("db://shop", { env })` | In a Worker. The call goes over Workers RPC to the binding `DB`. The caller is the service role, and the policies do not apply. |
 | `createClient("db://shop")` | In a browser. The call goes to `POST /db/shop` on the site, with the session cookie. The policies apply. |
 | `createClient(env.DB, { name })` | In a Worker, with a namespace. The default name is `db`. |
 | `createClient({ fetcher, url })` | Through a service binding. |
 
-The scheme `mail` uses the binding `MAILBOX`, and `files` uses `FILES` and `FILES_BUCKET`. `createClient("db://shop", env, { binding })` changes the binding.
+The scheme `mail` uses the binding `MAILBOX`, and `files` uses `FILES` and `FILES_BUCKET`. `createClient("db://shop", { env, binding })` changes the binding. A `mail://` client needs `env`, because `serve()` has no route for a mailbox.
 
 ## Serve the Routes over HTTP
 
@@ -180,7 +184,6 @@ export default {
 | Route | URI | Does |
 |---|---|---|
 | `POST /db/<name>` | `db://<name>` | Row calls and functions, as JSON-RPC 2.0 |
-| `POST /mail/<address>` | `mail://<address>` | The calls of a mailbox |
 | `POST /auth/main` | `auth://main` | `signInWithOtp`, `verifyOtp`, `getUser` and `signOut` |
 | `GET /auth/main/callback` | | The link of the sign-in email |
 | `GET`, `PUT /files/<bucket>/<name>` | `files://<bucket>/<name>` | A download and an upload |
@@ -195,13 +198,15 @@ A customer signs in with a link or a 6-digit code from one email. The Mailbox DO
 ```ts
 const db = createClient<Database>("db://shop");
 
-await db.auth.signInWithOtp({ email: "asha@example.com" });
+await db.auth.signInWithOtp({ email: "asha@example.com", next: "/orders" });
 const { data: user, error } = await db.auth.verifyOtp({ email: "asha@example.com", code: "482913" });
 await db.auth.getUser();
 await db.auth.signOut();
 ```
 
-The link signs in by itself and goes to `/`, or to the path in `next`. On another device, the customer types the code.
+The link signs in by itself and goes to the path in `next`. The default is `/`, and a path of another site also gives `/`. On another device, the customer types the code. `verifyOtp` names the code `code`, and supabase-js names it `token`.
+
+`auth()` stores each email in lower case, and `$auth.email` is in lower case. Store each email of your tables in lower case too, so that a rule such as `{ customer_email: { eq: $auth.email } }` matches.
 
 The Worker needs these bindings:
 
@@ -216,8 +221,10 @@ npx wrangler secret put DURABASE_AUTH_SECRET
 ```
 
 - The Worker keeps the session in two HttpOnly cookies, `__Host-durabase-access` and `__Host-durabase-refresh`. Script on the page cannot read them.
-- The access token is a JWT for 1 hour. The Worker checks it with no call to a Durable Object.
+- The access token is an HS256 JWT for 1 hour, signed with `DURABASE_AUTH_SECRET`. The Worker checks it with no call to a Durable Object.
 - When the access token expires, the Worker gets a new one from the Auth DO with the refresh token. A session lasts 30 days.
+- The refresh token of the step before works for 60 seconds more, for two tabs that refresh together. An older refresh token is a copy, so it ends the session.
+- The cookies need HTTPS, also in local development. Run `wrangler dev --local-protocol https`.
 - A POST with the cookie must come from a page of the site. Else the call is `anon`.
 - A client that is not a browser can send the access token in an `Authorization: Bearer` header.
 - The Auth DO keeps only the hashes of the link and the code. A code stops after 10 minutes, or after 5 wrong tries. One address gets 5 emails in 1 hour at most.
@@ -262,11 +269,19 @@ A rule is the `where` JSON of a query, with vars in place of values:
 - An object: each condition must match. A list of objects: one object must match. `true` and `false` match each row and no row.
 - The vars are `$auth.role`, `$auth.sub`, `$auth.email`, `$auth.groups`, `$ns` (the name of the Durable Object) and `$now`. A var with no value, such as `$auth.email` for `anon`, matches no row.
 - `$row.<column>` names a column of the outer row, in a rule for another table.
-- `has` tests a list var: `{ $auth.groups: { has: staff } }`.
+- A column and a var take `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `in` and `is`. `in` takes a list of values, or `$auth.groups`.
+- `$auth.groups` is a list, and takes only `has`: `{ $auth.groups: { has: staff } }`.
 - To write a text that starts with `$`, write `$$`.
-- A rule for a column must be `true` or `false`. A select of `*` leaves out a closed column.
+- A rule for a column must be `true` or `false`. A select of `*` leaves out a closed column. A filter or a sort on a closed column fails with `-32005`.
+- A files key names one file, or ends in `*` for each file under a prefix.
 
-`npx durabase db diff` checks each table, column and var against the schema, and writes the `db://` rules into the next migration. A policy change reaches each Durable Object with the next deploy. `npx durabase gen` writes the `files://` rules as `filesPolicies`.
+`npx durabase gen` checks each table, column, var and operator against the schema, and writes the rules into `durabase.gen.ts` as `policies`. Give the list to each Durable Object. A policy change reaches each Durable Object with the next deploy:
+
+```ts
+import { migrations, policies } from "./durabase.gen";
+
+export const Database = database({ migrations, functions, policies });
+```
 
 The service role skips the policies. A function also skips them.
 
@@ -285,14 +300,14 @@ One `Files` Durable Object keeps a row for each file of all buckets. One R2 buck
 
 ```ts
 import { files } from "@durabaseio/sdk";
-import { filesPolicies } from "./durabase.gen";
+import { policies } from "./durabase.gen";
 
 export const Files = files({
   buckets: {
     media: { public: true, maxSize: 5_000_000, types: ["image/*"] },
     printables: { maxSize: 50_000_000, types: ["application/pdf"] },
   },
-  policies: filesPolicies,
+  policies,
 });
 ```
 
@@ -310,15 +325,17 @@ const { data } = await media.list("avatars/");                   // the select r
 await media.remove(["avatars/asha.jpg"]);                        // the delete rule
 media.getPublicUrl("products/1.jpg");                            // /files/media/products/1.jpg
 
-// In the Worker, as the service role:
-const printables = createClient("files://printables", env);
+// In the Worker, as the service role. A signed link needs the origin of the site.
+const printables = createClient("files://printables", { env, origin: "https://example.com" });
 const { data: link } = await printables.createSignedUrl("atlas/india.pdf", { expiresIn: 7 * 24 * 3600 });
+// "https://example.com/files/printables/atlas/india.pdf?v=…&exp=…&sig=…"
 ```
 
-- A download from a public bucket needs no policy. A URL with the version needs no call to the Durable Object, and a cache can keep it for 1 year.
+- A download from a public bucket needs no policy. `list` on that bucket still needs the `select` rule. A URL with the version needs no call to the Durable Object, and a cache can keep it for 1 year.
 - A signed link needs no call to the Durable Object. A new upload or a remove of the file stops the link.
 - A download of a private file needs the `select` rule.
 - Each download has the headers `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so an uploaded HTML file cannot run script on the site.
+- Each JSON answer of `/files` is JSON-RPC 2.0, as on `/db` and `/auth`. The client gives `{ data, error }`.
 - An upload to a name that exists fails, unless `upsert` is true. The bucket refuses a file over `maxSize`, or of a type that is not in `types`.
 
 ## Mailbox
