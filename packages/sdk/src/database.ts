@@ -7,7 +7,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { SERVICE, type Auth } from "./caller";
 import { migrate, type Migration } from "./migrate";
-import { loadPolicies, Policies } from "./policy";
+import { parsePolicies, Policies, type Policy } from "./policy";
 import { DurabaseError, ErrorCode, type RpcResponse } from "./protocol";
 import { collectFunctions, handle, type Context, type Rows } from "./rpc";
 import { loadSchema, type Schema } from "./schema";
@@ -19,9 +19,9 @@ export interface DatabaseOptions {
   // "read" accepts select only, so each write goes through a function.
   // The default is "all".
   rows?: Rows;
-  // The URI scheme of the DO: "db" for a Database. The policies of the DO
-  // use it.
-  scheme?: string;
+  // The policies of durabase.gen.ts. The DO uses the db:// policies, for the
+  // callers of serve(). With no policies, a caller over HTTP gets no rows.
+  policies?: readonly Policy[];
 }
 
 export interface DatabaseRpc {
@@ -33,19 +33,18 @@ export interface DatabaseRpc {
 
 export function database(options: DatabaseOptions) {
   const functions = collectFunctions(options.functions);
-  const scheme = options.scheme ?? "db";
 
   return class Database extends DurableObject implements DatabaseRpc {
     #schema!: Schema;
-    #policies: Policies = new Policies(scheme, []);
+    #policies: Policies = new Policies("db", []);
     #migrationError?: DurabaseError;
 
     constructor(ctx: DurableObjectState, env: unknown) {
       super(ctx, env as never);
       ctx.blockConcurrencyWhile(async () => {
         try {
+          this.#policies = parsePolicies(options.policies ?? [], "db");
           migrate(ctx.storage, options.migrations);
-          this.#policies = loadPolicies(ctx.storage.sql, scheme);
         } catch (error) {
           this.#migrationError =
             error instanceof DurabaseError

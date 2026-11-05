@@ -45,12 +45,7 @@ func genTypes(ctx context.Context, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	for _, p := range rules {
-		isFiles := strings.HasPrefix(p.URI, "files://")
-		if isFiles {
-			opts.FilesPolicies = append(opts.FilesPolicies, p)
-		}
-	}
+	opts.Policies = rules
 
 	text := gen.TypeScript(snap, files, opts)
 	err = os.MkdirAll(filepath.Dir(*out), 0o750)

@@ -1,8 +1,6 @@
 package policies
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,18 +30,17 @@ var actions = []string{
 	"delete",
 }
 
-var operators = []string{
-	"eq",
-	"neq",
-	"gt",
-	"gte",
-	"lt",
-	"lte",
-	"in",
-	"is",
-	"like",
-	"has",
+// operators are the operators of a rule, by the kind of the left side: a
+// column, a var with one value, or a list var. The SDK has the same table in
+// packages/sdk/src/policy.ts, and a test compares the two.
+var operators = map[string][]string{
+	"column": {"eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is"},
+	"var":    {"eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is"},
+	"list":   {"has"},
 }
+
+// listVar is the one var that holds a list.
+const listVar = "$auth.groups"
 
 var vars = []string{
 	"$auth.role",
@@ -82,6 +79,11 @@ var filesSnap = &schema.Snapshot{
 		},
 	},
 }
+
+// folderKey matches a files key that ends in "/".
+var folderKey = regexp.MustCompile(`^files://[^/]+/(.*/)?$`)
+
+var errFolderKey = errors.New(`the key ends in "/". Use "*" for each file, such as files://media/avatars/*`)
 
 const keyHelp = "the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*"
 
@@ -195,6 +197,9 @@ func parseEntry(snap *schema.Snapshot, entry *ast.MappingValueNode) ([]Policy, e
 // target returns the table and the column of a key, and the schema that its
 // rules can name.
 func target(snap *schema.Snapshot, uri string) (*schema.Table, string, *schema.Snapshot, error) {
+	if folderKey.MatchString(uri) {
+		return nil, "", nil, errFolderKey
+	}
 	if filesPattern.MatchString(uri) {
 		return filesSnap.Tables["objects"], "", filesSnap, nil
 	}
@@ -273,10 +278,14 @@ func (c checker) condition(key string, v any, table, outer *schema.Table) error 
 		if !slices.Contains(vars, key) {
 			return fmt.Errorf("unknown var %s", key)
 		}
-		return c.operators(v, key, nil)
+		kind := "var"
+		if key == listVar {
+			kind = "list"
+		}
+		return c.operators(v, kind, nil)
 	}
 	if table.Column(key) != nil {
-		return c.operators(v, "", outer)
+		return c.operators(v, "column", outer)
 	}
 
 	other := findTable(c.snap, key)
@@ -286,21 +295,21 @@ func (c checker) condition(key string, v any, table, outer *schema.Table) error 
 	return c.rule(v, other, table)
 }
 
-// operators checks { eq: value, … }. varKey is the var on the left, or "".
-func (c checker) operators(v any, varKey string, outer *schema.Table) error {
+// operators checks { eq: value, … }. kind is the kind of the left side:
+// column, var or list. outer is the table that $row names, or nil.
+func (c checker) operators(v any, kind string, outer *schema.Table) error {
 	ops, ok := v.(map[string]any)
 	if !ok {
 		return errors.New("a condition must be an object of operators, such as { eq: paid }")
 	}
-	for op, value := range ops {
-		if !slices.Contains(operators, op) {
-			return fmt.Errorf("unknown operator %s", op)
-		}
-		isListVar := varKey == "$auth.groups"
-		if op == "has" && !isListVar {
-			return errors.New("has is only for a list var, such as $auth.groups")
-		}
-		err := c.value(value, outer)
+	names := make([]string, 0, len(ops))
+	for op := range ops {
+		names = append(names, op)
+	}
+	slices.Sort(names)
+
+	for _, op := range names {
+		err := c.operator(op, ops[op], kind, outer)
 		if err != nil {
 			return err
 		}
@@ -308,22 +317,65 @@ func (c checker) operators(v any, varKey string, outer *schema.Table) error {
 	return nil
 }
 
-func (c checker) value(v any, outer *schema.Table) error {
-	if list, ok := v.([]any); ok {
-		for _, item := range list {
-			err := c.value(item, outer)
-			if err != nil {
-				return err
-			}
+func (c checker) operator(op string, value any, kind string, outer *schema.Table) error {
+	known := slices.Contains(operators["column"], op) || slices.Contains(operators["list"], op)
+	if !known {
+		return fmt.Errorf("unknown operator %s", op)
+	}
+	if !slices.Contains(operators[kind], op) {
+		if kind == "list" {
+			return fmt.Errorf("%s is a list. Use has, such as { has: staff }", listVar)
+		}
+		return errors.New("has is only for a list var, such as $auth.groups")
+	}
+
+	switch op {
+	case "in":
+		return c.list(value)
+	case "is":
+		isFlag := value == nil || value == true || value == false
+		if !isFlag {
+			return errors.New("is needs null, true or false")
 		}
 		return nil
 	}
+	_, isList := value.([]any)
+	if isList || value == listVar {
+		return fmt.Errorf("%s needs one value", op)
+	}
+	return c.value(value, outer)
+}
 
-	s, ok := v.(string)
-	isVar := ok && strings.HasPrefix(s, "$") && !strings.HasPrefix(s, "$$")
-	if !isVar {
+// list checks the value of in: a list of plain values, or $auth.groups.
+func (c checker) list(v any) error {
+	errList := errors.New("in needs a list of values, or $auth.groups")
+	if v == listVar {
 		return nil
 	}
+	items, ok := v.([]any)
+	if !ok {
+		return errList
+	}
+	for _, item := range items {
+		if isVar(item) {
+			return errList
+		}
+	}
+	return nil
+}
+
+// isVar reports whether v is a var, such as $auth.email. "$$5" is the text "$5".
+func isVar(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.HasPrefix(s, "$") && !strings.HasPrefix(s, "$$")
+}
+
+// value checks one value: a plain value, a var or $row.<column>.
+func (c checker) value(v any, outer *schema.Table) error {
+	if !isVar(v) {
+		return nil
+	}
+	s, _ := v.(string)
 
 	column, isRow := strings.CutPrefix(s, "$row.")
 	if !isRow {
@@ -339,75 +391,4 @@ func (c checker) value(v any, outer *schema.Table) error {
 		return fmt.Errorf("%s has no column %s", outer.Name, column)
 	}
 	return nil
-}
-
-// Diff returns the statements that change the db:// policies of db into
-// desired. The policies of other schemes stay. The files:// policies go to
-// the Files DO with durabase gen, not to the migrations.
-func Diff(ctx context.Context, db *sql.DB, desired []Policy) ([]string, error) {
-	current, err := read(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-
-	var out []string
-	seen := map[string]bool{}
-	for _, p := range desired {
-		isDB := strings.HasPrefix(p.URI, "db://")
-		if !isDB {
-			continue
-		}
-		k := p.URI + " " + p.Action
-		seen[k] = true
-		rule, exists := current[k]
-		if exists && rule == p.Rule {
-			continue
-		}
-		out = append(out, fmt.Sprintf(
-			"INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES (%s, %s, %s)",
-			quote(p.URI),
-			quote(p.Action),
-			quote(p.Rule),
-		))
-	}
-
-	gone := make([]string, 0, len(current))
-	for k := range current {
-		if !seen[k] {
-			gone = append(gone, k)
-		}
-	}
-	slices.Sort(gone)
-	for _, k := range gone {
-		uri, action, _ := strings.Cut(k, " ")
-		out = append(out, fmt.Sprintf(
-			"DELETE FROM _durabase_policies WHERE uri = %s AND action = %s",
-			quote(uri),
-			quote(action),
-		))
-	}
-	return out, nil
-}
-
-func read(ctx context.Context, db *sql.DB) (current map[string]string, err error) {
-	rows, err := db.QueryContext(ctx, "SELECT uri, action, rule FROM _durabase_policies WHERE uri LIKE 'db://%'")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-
-	current = map[string]string{}
-	for rows.Next() {
-		var uri, action, rule string
-		err := rows.Scan(&uri, &action, &rule)
-		if err != nil {
-			return nil, err
-		}
-		current[uri+" "+action] = rule
-	}
-	return current, rows.Err()
-}
-
-func quote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

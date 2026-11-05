@@ -112,14 +112,19 @@ func TestQuote(t *testing.T) {
 	}
 }
 
-func TestTypeScriptFilesPolicies(t *testing.T) {
+func TestTypeScriptPolicies(t *testing.T) {
 	snap := &schema.Snapshot{Tables: map[string]*schema.Table{}}
 
 	without := TypeScript(snap, nil, Options{})
-	assert.NotContains(t, without, "filesPolicies")
+	assert.NotContains(t, without, "policies")
 
 	text := TypeScript(snap, nil, Options{
-		FilesPolicies: []policies.Policy{
+		Policies: []policies.Policy{
+			{
+				URI:    "db://*/orders",
+				Action: "select",
+				Rule:   "true",
+			},
 			{
 				URI:    "files://media/avatars/*",
 				Action: "insert",
@@ -128,8 +133,9 @@ func TestTypeScriptFilesPolicies(t *testing.T) {
 		},
 	})
 	for _, want := range []string{
-		`import type { FilePolicy, Migration } from "@durabaseio/sdk";`,
-		`export const filesPolicies: FilePolicy[] = [`,
+		`import type { Migration, Policy } from "@durabaseio/sdk";`,
+		`export const policies: Policy[] = [`,
+		`  { uri: "db://*/orders", action: "select", rule: "true" },`,
 		`  { uri: "files://media/avatars/*", action: "insert", rule: "{\"$auth.role\":{\"eq\":\"authenticated\"}}" },`,
 	} {
 		assert.Contains(t, text, want)

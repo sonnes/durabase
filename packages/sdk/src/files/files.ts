@@ -1,7 +1,7 @@
 // The Files Durable Object. One DO keeps a row for each file of all buckets,
 // and R2 keeps the bytes. A project exports it with one line:
 //
-//   export const Files = files({ buckets, policies: filesPolicies });
+//   export const Files = files({ buckets, policies });
 //
 // Each file call is a row operation on objects, and the policies of
 // files:// decide it, as the policies of storage.objects do in Supabase:
@@ -16,7 +16,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Auth } from "../caller";
 import { migrate } from "../migrate";
-import { compileRule, POLICIES_TABLE, type Fragment, type Rule, type Vars } from "../policy";
+import { compileRule, type Action, type Fragment, type Policy, type Rule, type Vars } from "../policy";
 import { DurabaseError, ErrorCode, type RpcError } from "../protocol";
 import { loadSchema, type Schema, type TableInfo } from "../schema";
 import { migrations } from "./files.gen";
@@ -30,16 +30,10 @@ export interface Bucket {
   types?: string[];
 }
 
-// A policy of files://, from policies.yaml. `durabase gen` writes the list.
-export interface FilePolicy {
-  uri: string;
-  action: "select" | "insert" | "update" | "delete";
-  rule: string;
-}
-
 export interface FilesOptions {
   buckets: Record<string, Bucket>;
-  policies?: FilePolicy[];
+  // The policies of durabase.gen.ts. The DO uses the files:// policies.
+  policies?: readonly Policy[];
 }
 
 export interface FileRow {
@@ -59,8 +53,6 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; error: RpcError }
 
 const LIST_LIMIT = 1000;
 
-type Action = FilePolicy["action"];
-
 // files://media, files://media/*, files://media/avatars/* or files://media/logo.png
 interface Pattern {
   bucket: string;
@@ -70,10 +62,11 @@ interface Pattern {
   rule: Rule;
 }
 
-function parsePattern(p: FilePolicy): Pattern {
+function parsePattern(p: Policy): Pattern {
   const m = /^files:\/\/([a-z0-9][a-z0-9_.-]*)(?:\/(.*))?$/.exec(p.uri);
   if (!m) throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${p.uri} is not a files:// URI`);
   const path = m[2] ?? "*";
+  if (path.endsWith("/")) throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${p.uri} ends in "/". Use "*" for each file.`);
   const exact = !path.endsWith("*");
   return { bucket: m[1], prefix: exact ? path : path.slice(0, -1), exact, action: p.action, rule: JSON.parse(p.rule) as Rule };
 }
@@ -92,7 +85,7 @@ class Refused extends Error {
 class Rollback extends Error {}
 
 export function files(options: FilesOptions) {
-  const patterns = (options.policies ?? []).map(parsePattern);
+  const patterns = (options.policies ?? []).filter((p) => p.uri.startsWith("files://")).map(parsePattern);
 
   return class Files extends DurableObject {
     #schema!: Schema;
@@ -103,13 +96,6 @@ export function files(options: FilesOptions) {
       ctx.blockConcurrencyWhile(async () => {
         try {
           migrate(ctx.storage, migrations);
-          // The policies come with the deploy. The rows keep a record of them.
-          ctx.storage.transactionSync(() => {
-            ctx.storage.sql.exec(`DELETE FROM ${POLICIES_TABLE} WHERE uri LIKE 'files://%'`);
-            for (const p of options.policies ?? []) {
-              ctx.storage.sql.exec(`INSERT INTO ${POLICIES_TABLE} (uri, action, rule) VALUES (?, ?, ?)`, p.uri, p.action, p.rule);
-            }
-          });
         } catch (error) {
           this.#migrationError =
             error instanceof DurabaseError

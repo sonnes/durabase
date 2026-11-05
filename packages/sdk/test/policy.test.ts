@@ -7,7 +7,7 @@ import type { Database } from "./durabase.gen";
 
 const asha: Auth = { role: "authenticated", sub: "u-asha", email: "asha@example.com", groups: [] };
 const ravi: Auth = { role: "authenticated", sub: "u-ravi", email: "ravi@example.com", groups: [] };
-const staff: Auth = { role: "authenticated", sub: "u-staff", email: "staff@example.com", groups: ["staff"] };
+const staff: Auth = { role: "authenticated", sub: "u-staff", email: "kiran@staff.example", groups: ["staff"] };
 const anon: Auth = { role: "anon" };
 
 // A namespace with two orders: one of asha and one of ravi.
@@ -22,6 +22,7 @@ async function shop() {
     { order_id: "LP-1", product_id: "kit", title: "Brick kit", quantity: 1 },
     { order_id: "LP-2", product_id: "pdf", title: "Printables", quantity: 2 },
   ]);
+  await service.from("tags").insert([{ name: "red", owner: "kiran@staff.example" }]);
   await service.from("counters").insert([
     { name: "public", value: 1 },
     { name: "private", value: 2 },
@@ -59,6 +60,27 @@ describe("select", () => {
     expect(r.error).toEqual({ code: -32005, message: expect.stringMatching(/^no access to db:\/\/.+\/orders#customer$/) });
     const all = await call(asha, "select", { table: "orders" });
     expect(Object.keys(all.result!.rows![0]).sort()).toEqual(["amount_paise", "created_at", "customer_email", "id", "notes", "state"]);
+  });
+
+  it("refuses a filter or a sort on a closed column", async () => {
+    const { call } = await shop();
+    const closed = { code: -32005, message: expect.stringMatching(/^no access to db:\/\/.+\/orders#customer$/) };
+    const where = await call(asha, "select", { table: "orders", columns: ["id"], where: { customer: { like: "%{%" } } });
+    expect(where.error).toEqual(closed);
+    const order = await call(asha, "select", { table: "orders", columns: ["id"], order: [["customer", "asc"]] });
+    expect(order.error).toEqual(closed);
+    const update = await call(asha, "update", { table: "orders", set: { notes: "x" }, where: { customer: { eq: "{}" } } });
+    expect(update.error).toEqual(closed);
+    const remove = await call(staff, "delete", { table: "orders", where: { customer: { eq: "{}" } } });
+    expect(remove.error).toMatchObject({ code: -32005 });
+  });
+
+  it("matches a var with like", async () => {
+    const { call } = await shop();
+    const s = await call(staff, "select", { table: "tags", columns: ["name"] });
+    expect(s.result?.rows).toEqual([{ name: "red" }]);
+    const a = await call(asha, "select", { table: "tags", columns: ["name"] });
+    expect(a.result?.rows).toEqual([]);
   });
 
   it("matches a list var with has, and a list with one match", async () => {
@@ -115,6 +137,16 @@ describe("writes", () => {
     const { call } = await shop();
     const r = await call(asha, "update", { table: "orders", set: { customer_email: "ravi@example.com" }, where: { id: { eq: "LP-1" } } });
     expect(r.error).toMatchObject({ code: -32005 });
+  });
+
+  it("checks the rows of a table with no rowid", async () => {
+    const { call } = await shop();
+    const ok = await call(asha, "insert", { table: "tags", rows: [{ name: "blue", owner: "asha@example.com" }] });
+    expect(ok.result).toEqual({ count: 1 });
+    const bad = await call(asha, "insert", { table: "tags", rows: [{ name: "green", owner: "ravi@example.com" }] });
+    expect(bad.error).toMatchObject({ code: -32005 });
+    const moved = await call(asha, "update", { table: "tags", set: { owner: "ravi@example.com" }, where: { name: { eq: "blue" } } });
+    expect(moved.error).toMatchObject({ code: -32005 });
   });
 
   it("refuses a write with no policy", async () => {

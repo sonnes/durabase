@@ -38,11 +38,19 @@ function exec(sql: SqlStorage, query: string, bindings: SqlStorageValue[]): SqlS
   }
 }
 
-function buildWhere(where: Where | undefined, table: TableInfo): { sql: string; bindings: SqlStorageValue[] } {
+// A column that the caller cannot read cannot pick or sort the rows either.
+// Else a filter such as like '%9%' reads a closed column one character at a
+// time.
+function assertReadable(table: TableInfo, column: string, guard: Guard | undefined): void {
+  if (guard && !guard.column(table, column, "select")) throw guard.forbidden("select", table, column);
+}
+
+function buildWhere(where: Where | undefined, table: TableInfo, guard?: Guard): { sql: string; bindings: SqlStorageValue[] } {
   if (!where) return { sql: "", bindings: [] };
   const parts: string[] = [];
   const bindings: SqlStorageValue[] = [];
   for (const [name, ops] of Object.entries(where)) {
+    assertReadable(table, table.column(name), guard);
     const col = quote(table.column(name));
     for (const [op, value] of Object.entries(ops)) {
       switch (op) {
@@ -96,7 +104,8 @@ function chunks<T>(items: T[], size: number): T[][] {
 }
 
 const KEY = "__durabase_key";
-const ROWID = "__durabase_rowid";
+// The key columns of a written row, for the check after the write.
+const ROW_KEY = "__durabase_pk";
 
 // Adds the rule of a policy to a where.
 function withRule(where: Fragment, rule: Fragment | null | undefined): Fragment {
@@ -120,21 +129,29 @@ function selectColumns(table: TableInfo, columns: string[], guard: Guard | undef
 
 function returningColumns(returning: string[] | undefined, table: TableInfo, guard: Guard | undefined): string {
   const cols = returning ? selectColumns(table, returning, guard) : [];
-  if (guard) cols.push(`rowid AS ${ROWID}`);
+  if (guard) table.key.forEach((k, i) => cols.push(`${k === "rowid" ? k : quote(k)} AS ${ROW_KEY}${i}`));
   if (cols.length === 0) return " RETURNING 1 AS __durabase_one";
   return ` RETURNING ${cols.join(", ")}`;
 }
 
 // After a write, each new row must pass the rule. Else the DO throws, and
-// SQLite rolls back the call.
+// SQLite rolls back the call. The check finds the rows by their key, so it
+// also works on a table WITHOUT ROWID.
 function checkRows(sql: SqlStorage, table: TableInfo, rows: Row[], rule: Fragment, guard: Guard, action: Action): void {
-  const ids = rows.map((r) => r[ROWID] as SqlStorageValue);
-  for (const part of chunks(ids, Math.max(1, MAX_BINDINGS - rule.bindings.length))) {
-    const q = `SELECT count(*) AS bad FROM ${quote(table.name)} WHERE rowid IN (${part.map(() => "?").join(", ")}) AND NOT coalesce((${rule.sql}), 0)`;
-    const [{ bad }] = exec(sql, q, [...part, ...rule.bindings]).toArray() as { bad: number }[];
+  const keys = table.key.map((k) => (k === "rowid" ? k : quote(k)));
+  const tuple = `(${keys.map(() => "?").join(", ")})`;
+  const room = Math.max(1, Math.floor((MAX_BINDINGS - rule.bindings.length) / keys.length));
+  for (const part of chunks(rows, room)) {
+    const values = part.flatMap((r) => keys.map((_, i) => r[`${ROW_KEY}${i}`] as SqlStorageValue));
+    const q = `SELECT count(*) AS bad FROM ${quote(table.name)} WHERE (${keys.join(", ")}) IN (VALUES ${part.map(() => tuple).join(", ")}) AND NOT coalesce((${rule.sql}), 0)`;
+    const [{ bad }] = exec(sql, q, [...values, ...rule.bindings]).toArray() as { bad: number }[];
     if (bad > 0) throw guard.forbidden(action, table);
   }
-  for (const r of rows) delete r[ROWID];
+  dropKeys(table, rows);
+}
+
+function dropKeys(table: TableInfo, rows: Row[]): void {
+  for (const r of rows) table.key.forEach((_, i) => delete r[`${ROW_KEY}${i}`]);
 }
 
 export function select(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Guard): RowsResult {
@@ -166,10 +183,11 @@ export function select(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
   const cols = plain.length || relations.length === 0 ? selectColumns(table, plain, guard) : [];
   keyCols.forEach((k, i) => cols.push(`${quote(k)} AS ${KEY}${i}`));
 
-  const where = withRule(buildWhere(p.where, table), rule);
+  const where = withRule(buildWhere(p.where, table, guard), rule);
   let query = `SELECT ${cols.join(", ")} FROM ${quote(table.name)}${where.sql}`;
   const bindings = [...where.bindings];
   if (p.order?.length) {
+    for (const [c] of p.order) assertReadable(table, table.column(c), guard);
     query += ` ORDER BY ${p.order.map(([c, d]) => `${quote(table.column(c))} ${d === "desc" ? "DESC" : "ASC"}`).join(", ")}`;
   }
   if (p.limit !== undefined || p.offset !== undefined) {
@@ -246,7 +264,7 @@ export function update(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
   if (guard) for (const s of sets) if (!guard.column(table, s.col, "update")) throw guard.forbidden("update", table, s.col);
   // The rule picks the rows that the caller can change. After the update,
   // each row must still pass it.
-  const where = withRule(buildWhere(p.where, table), rule);
+  const where = withRule(buildWhere(p.where, table, guard), rule);
   const query = `UPDATE ${quote(table.name)} SET ${sets.map((s) => `${quote(s.col)} = ?`).join(", ")}${where.sql}${returningColumns(p.returning, table, guard)}`;
   const rows = exec(sql, query, [...sets.map((s) => s.value), ...where.bindings]).toArray();
   if (guard && rule) checkRows(sql, table, rows, rule, guard, "update");
@@ -258,10 +276,10 @@ export function remove(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
   const table = schema.table(p.table);
   const rule = guard?.rule(table, "delete");
   if (guard && !rule) throw guard.forbidden("delete", table);
-  const where = withRule(buildWhere(p.where, table), rule);
+  const where = withRule(buildWhere(p.where, table, guard), rule);
   const query = `DELETE FROM ${quote(table.name)}${where.sql}${returningColumns(p.returning, table, guard)}`;
   const rows = exec(sql, query, where.bindings).toArray();
-  for (const r of rows) delete r[ROWID];
+  dropKeys(table, rows);
   return p.returning ? { rows, count: rows.length } : { count: rows.length };
 }
 

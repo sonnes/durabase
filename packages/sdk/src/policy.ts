@@ -1,7 +1,7 @@
-// The policies of a DO. Each policy is a row of _durabase_policies, which the
-// migrations write:
+// The policies of a DO. `durabase gen` reads policies.yaml and writes the
+// list into durabase.gen.ts, and each DO gets the list as an option:
 //
-//   ('db://shop/orders', 'select', '{"customer_email":{"eq":"$auth.email"}}')
+//   { uri: "db://*/orders", action: "select", rule: '{"customer_email":{"eq":"$auth.email"}}' }
 //
 // A rule is the where JSON of a query, with vars in place of values. An
 // object: each condition must match. A list: one object must match. true
@@ -15,7 +15,24 @@ import type { Auth } from "./caller";
 import { DurabaseError, ErrorCode } from "./protocol";
 import { quote, type Schema, type TableInfo } from "./schema";
 
-export const POLICIES_TABLE = "_durabase_policies";
+// One policy of policies.yaml. `durabase gen` writes the list.
+export interface Policy {
+  uri: string;
+  action: Action;
+  rule: string;
+}
+
+// The operators of a rule, by the kind of the left side: a column, a var
+// with one value, or a list var. The CLI has the same table in
+// cli/internal/policies/policies.go, and a test compares the two.
+export const OPERATORS = {
+  column: ["eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is"],
+  var: ["eq", "neq", "gt", "gte", "lt", "lte", "like", "in", "is"],
+  list: ["has"],
+} as const;
+
+// The one var that holds a list.
+const LIST_VAR = "$auth.groups";
 
 export type Action = "select" | "insert" | "update" | "delete";
 const ACTIONS: readonly string[] = ["select", "insert", "update", "delete"];
@@ -73,32 +90,32 @@ function key(authority: string, table: string, column: string | undefined, actio
   return `${authority}\u0000${table}\u0000${column ?? ""}\u0000${action}`;
 }
 
-// Reads the policies that the migrations wrote. A row that is not valid
-// stops the DO, as a failed migration does, so a typo never opens a table.
-export function loadPolicies(sql: SqlStorage, scheme: string): Policies {
-  const rows = sql.exec<{ uri: string; action: string; rule: string }>(`SELECT uri, action, rule FROM ${POLICIES_TABLE}`).toArray();
+// Reads the policies of one scheme from the list of durabase.gen.ts. A
+// policy that is not valid stops the DO, as a failed migration does, so a
+// typo never opens a table.
+export function parsePolicies(list: readonly Policy[], scheme: string): Policies {
   const entries: Entry[] = [];
-  for (const row of rows) {
-    const m = PATTERN.exec(row.uri);
-    if (!m || !m[3]) throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${row.uri} is not a table or a column`);
-    if (m[1] !== scheme) continue;
-    if (!ACTIONS.includes(row.action)) {
-      throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${row.uri} has an unknown action: ${row.action}`);
+  for (const p of list) {
+    const m = PATTERN.exec(p.uri);
+    if (!m || m[1] !== scheme) continue;
+    if (!m[3]) throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${p.uri} is not a table or a column`);
+    if (!ACTIONS.includes(p.action)) {
+      throw new DurabaseError(ErrorCode.MigrationFailed, `the policy ${p.uri} has an unknown action: ${p.action}`);
     }
     let rule: Rule;
     try {
-      rule = JSON.parse(row.rule) as Rule;
+      rule = JSON.parse(p.rule) as Rule;
     } catch {
-      throw new DurabaseError(ErrorCode.MigrationFailed, `the rule of ${row.uri} ${row.action} is not JSON`);
+      throw new DurabaseError(ErrorCode.MigrationFailed, `the rule of ${p.uri} ${p.action} is not JSON`);
     }
     if (m[4] !== undefined && typeof rule !== "boolean") {
-      throw new DurabaseError(ErrorCode.MigrationFailed, `the rule of the column ${row.uri} must be true or false`);
+      throw new DurabaseError(ErrorCode.MigrationFailed, `the rule of the column ${p.uri} must be true or false`);
     }
     entries.push({
       authority: decodeURIComponent(m[2]).toLowerCase(),
       table: m[3].toLowerCase(),
       column: m[4]?.toLowerCase(),
-      action: row.action as Action,
+      action: p.action,
       rule,
     });
   }
@@ -221,8 +238,8 @@ class Compiler {
           break;
         }
         case "in": {
-          const list = isVar(v) ? readVar(v, this.vars) : v;
-          if (!Array.isArray(list)) throw new DurabaseError(ErrorCode.InternalError, `in needs a list: ${col}`);
+          const list = v === LIST_VAR ? readVar(v, this.vars) : v;
+          if (!Array.isArray(list) || list.some(isVar)) throw new DurabaseError(ErrorCode.InternalError, `in needs a list of values, or ${LIST_VAR}: ${col}`);
           if (list.length === 0) parts.push(MATCH_NONE);
           else parts.push({ sql: `${col} IN (${list.map(() => "?").join(", ")})`, bindings: list.map((x) => bindable(literal(x))) });
           break;
@@ -241,14 +258,22 @@ class Compiler {
   }
 
   // { $auth.role: { eq: "authenticated" } }: the DO knows both sides, so the
-  // test is 1 or 0 in the SQL.
+  // test is 1 or 0 in the SQL. SQLite does a like, so a rule and a query
+  // give the same answer.
   private varTest(name: string, ops: Record<string, unknown>): Fragment {
     const left = readVar(name, this.vars);
+    const allowed: readonly string[] = name === LIST_VAR ? OPERATORS.list : OPERATORS.var;
+    const parts: Fragment[] = [];
     for (const [op, raw] of Object.entries(ops ?? {})) {
+      if (!allowed.includes(op)) throw new DurabaseError(ErrorCode.InternalError, `${name} has no operator ${op}`);
       const right = isVar(raw) ? readVar(raw, this.vars) : literal(raw);
+      if (op === "like") {
+        parts.push({ sql: "? LIKE ?", bindings: [bindable(left), bindable(right)] });
+        continue;
+      }
       if (!compare(op, left, right)) return MATCH_NONE;
     }
-    return MATCH_ALL;
+    return parts.length ? join(parts, "AND") : MATCH_ALL;
   }
 }
 

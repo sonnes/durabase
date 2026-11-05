@@ -20,6 +20,11 @@ db://*/counters:
     - { $auth.groups: { has: staff } }
     - { name: { eq: public } }
 
+db://*/tags:
+  select: { $auth.email: { like: "%@staff.example" } }
+  insert: { owner: { eq: $auth.email } }
+  update: { owner: { eq: $auth.email } }
+
 files://media/avatars/*:
   select: true
   insert: { $auth.role: { eq: authenticated } }

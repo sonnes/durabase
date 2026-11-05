@@ -3,6 +3,9 @@ package policies
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,6 +129,28 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "like and in on a var",
+			yaml: "db://shop/products:\n  insert:\n    - { $auth.email: { like: \"%@littleplay.co\" } }\n    - { $auth.role: { in: [service, authenticated] } }\n",
+			want: []Policy{
+				{
+					URI:    "db://shop/products",
+					Action: "insert",
+					Rule:   `[{"$auth.email":{"like":"%@littleplay.co"}},{"$auth.role":{"in":["service","authenticated"]}}]`,
+				},
+			},
+		},
+		{
+			name: "in with the groups of the caller",
+			yaml: "db://shop/orders:\n  select: { state: { in: $auth.groups } }\n",
+			want: []Policy{
+				{
+					URI:    "db://shop/orders",
+					Action: "select",
+					Rule:   `{"state":{"in":"$auth.groups"}}`,
+				},
+			},
+		},
+		{
 			name: "no file content",
 			yaml: "",
 			want: nil,
@@ -221,6 +246,51 @@ func TestParseErrors(t *testing.T) {
 			yaml: "files://media/*/x:\n  select: true\n",
 			want: "policies.yaml:1: files://media/*/x: the key must be a table, such as db://shop/orders, or files, such as files://media/avatars/*",
 		},
+		{
+			name: "eq on a list var",
+			yaml: "db://shop/orders:\n  select: { $auth.groups: { eq: staff } }\n",
+			want: "policies.yaml:2: db://shop/orders select: $auth.groups is a list. Use has, such as { has: staff }",
+		},
+		{
+			name: "has with a list",
+			yaml: "db://shop/orders:\n  select: { $auth.groups: { has: [staff] } }\n",
+			want: "policies.yaml:2: db://shop/orders select: has needs one value",
+		},
+		{
+			name: "$row in a list of in",
+			yaml: "db://shop/order_items:\n  select: { orders: { id: { in: [$row.order_id] } } }\n",
+			want: "policies.yaml:2: db://shop/order_items select: in needs a list of values, or $auth.groups",
+		},
+		{
+			name: "in with one value",
+			yaml: "db://shop/orders:\n  select: { state: { in: paid } }\n",
+			want: "policies.yaml:2: db://shop/orders select: in needs a list of values, or $auth.groups",
+		},
+		{
+			name: "eq with a list",
+			yaml: "db://shop/orders:\n  select: { state: { eq: [paid] } }\n",
+			want: "policies.yaml:2: db://shop/orders select: eq needs one value",
+		},
+		{
+			name: "eq with a list var",
+			yaml: "db://shop/orders:\n  select: { state: { eq: $auth.groups } }\n",
+			want: "policies.yaml:2: db://shop/orders select: eq needs one value",
+		},
+		{
+			name: "is with text",
+			yaml: "db://shop/orders:\n  select: { state: { is: paid } }\n",
+			want: "policies.yaml:2: db://shop/orders select: is needs null, true or false",
+		},
+		{
+			name: "a files key that ends in a slash",
+			yaml: "files://media/:\n  select: true\n",
+			want: `policies.yaml:1: files://media/: the key ends in "/". Use "*" for each file, such as files://media/avatars/*`,
+		},
+		{
+			name: "a files prefix that ends in a slash",
+			yaml: "files://media/avatars/:\n  select: true\n",
+			want: `policies.yaml:1: files://media/avatars/: the key ends in "/". Use "*" for each file, such as files://media/avatars/*`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -231,89 +301,19 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
-func TestDiff(t *testing.T) {
-	orders := Policy{
-		URI:    "db://shop/orders",
-		Action: "select",
-		Rule:   `{"customer_email":{"eq":"$auth.email"}}`,
-	}
-	anyone := Policy{
-		URI:    "db://shop/orders",
-		Action: "select",
-		Rule:   "true",
-	}
-	products := Policy{
-		URI:    "db://shop/products",
-		Action: "select",
-		Rule:   "true",
-	}
-	tests := []struct {
-		name    string
-		current []Policy
-		desired []Policy
-		want    []string
-	}{
-		{
-			name:    "a new policy",
-			desired: []Policy{orders},
-			want: []string{
-				`INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://shop/orders', 'select', '{"customer_email":{"eq":"$auth.email"}}')`,
-			},
-		},
-		{
-			name:    "no change",
-			current: []Policy{orders},
-			desired: []Policy{orders},
-		},
-		{
-			name:    "a changed rule",
-			current: []Policy{orders},
-			desired: []Policy{anyone},
-			want: []string{
-				`INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://shop/orders', 'select', 'true')`,
-			},
-		},
-		{
-			name:    "a removed policy",
-			current: []Policy{orders, products},
-			desired: []Policy{orders},
-			want: []string{
-				`DELETE FROM _durabase_policies WHERE uri = 'db://shop/products' AND action = 'select'`,
-			},
-		},
-		{
-			name: "a files policy goes to the Files DO, not to the migrations",
-			desired: []Policy{
-				{
-					URI:    "files://media/*",
-					Action: "select",
-					Rule:   "true",
-				},
-			},
-		},
-		{
-			name: "a policy of another scheme stays",
-			current: []Policy{
-				{
-					URI:    "files://media/avatars/*",
-					Action: "insert",
-					Rule:   "true",
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			db := open(t, "")
-			for _, p := range tt.current {
-				_, err := db.ExecContext(ctx, "INSERT INTO _durabase_policies (uri, action, rule) VALUES (?, ?, ?)", p.URI, p.Action, p.Rule)
-				require.NoError(t, err)
-			}
+// TestOperatorsMatchSDK makes sure that the CLI and the Durable Object accept
+// the same operators. The SDK keeps its table in packages/sdk/src/policy.ts.
+func TestOperatorsMatchSDK(t *testing.T) {
+	text, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "sdk", "src", "policy.ts"))
+	require.NoError(t, err)
 
-			got, err := Diff(ctx, db, tt.desired)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
+	line := regexp.MustCompile(`(?m)^  (column|var|list): \[([^\]]*)\],`)
+	word := regexp.MustCompile(`"([a-z]+)"`)
+	got := map[string][]string{}
+	for _, m := range line.FindAllStringSubmatch(string(text), -1) {
+		for _, w := range word.FindAllStringSubmatch(m[2], -1) {
+			got[m[1]] = append(got[m[1]], w[1])
+		}
 	}
+	assert.Equal(t, operators, got)
 }

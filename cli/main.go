@@ -21,7 +21,8 @@ Usage:
   durabase version
 
 The project folder (-dir) holds schema/*.sql and policies.yaml, the desired
-state that you edit, and migrations/*.sql, which durabase writes.
+state that you edit, and migrations/*.sql, which durabase writes. durabase gen
+writes the types, the migrations and the policies into one TypeScript file.
 `
 
 func main() {

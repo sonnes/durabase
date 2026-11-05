@@ -62,7 +62,7 @@ export function normalEmail(email: string): string {
 type Stub = { rpc(body: unknown): Promise<RpcResponse | RpcResponse[] | undefined> };
 
 export function auth(options: AuthOptions) {
-  const Base = database({ migrations, functions, rows: "read", scheme: "auth" });
+  const Base = database({ migrations, functions, rows: "read" });
   const secretBinding = options.secret ?? DEFAULT_SECRET;
   const mailboxBinding = options.mailbox ?? "MAILBOX";
   const render = options.email ?? defaultEmail;

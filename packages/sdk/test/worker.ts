@@ -2,10 +2,10 @@
 // Mailbox DO, the Auth DO, the Files DO, and the durabase routes of serve().
 
 import { auth, database, files, mailbox, serve } from "../src";
-import { filesPolicies, migrations } from "./durabase.gen";
+import { migrations, policies } from "./durabase.gen";
 import * as functions from "./functions";
 
-export const Database = database({ migrations, functions });
+export const Database = database({ migrations, functions, policies });
 export const Mailbox = mailbox();
 export const Auth = auth({ from: "orders@shop.example", site: "https://shop.example" });
 export const Files = files({
@@ -13,7 +13,7 @@ export const Files = files({
     media: { public: true, maxSize: 1000, types: ["image/*", "text/plain"] },
     printables: { maxSize: 10_000, types: ["application/pdf"] },
   },
-  policies: filesPolicies,
+  policies,
 });
 
 export default {

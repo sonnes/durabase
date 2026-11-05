@@ -36,7 +36,7 @@ describe("migrations", () => {
     expect(rows).toEqual([
       { version: 1, name: "init" },
       { version: 2, name: "notes" },
-      { version: 3, name: "policies" },
+      { version: 3, name: "customer_email_and_tags" },
     ]);
   });
 

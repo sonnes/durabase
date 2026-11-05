@@ -15,6 +15,9 @@ export interface TableInfo {
   name: string;
   columns: string[];
   relations: Map<string, Relation>; // the key is the other table, in lower case
+  // The columns that find one row: the primary key, or rowid for a table
+  // with no primary key.
+  key: string[];
   column(name: string): string;
 }
 
@@ -53,10 +56,12 @@ export function loadSchema(sql: SqlStorage): Schema {
       name.toLowerCase(),
       cols.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name),
     );
+    const key = pk.get(name.toLowerCase()) ?? [];
     schema.tables.set(name.toLowerCase(), {
       name,
       columns: cols.map((c) => c.name),
       relations: new Map(),
+      key: key.length ? key : ["rowid"],
       column(col: string) {
         const found = lower.get(col.toLowerCase());
         if (!found) {

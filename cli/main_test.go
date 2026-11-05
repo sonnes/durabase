@@ -60,29 +60,31 @@ func TestDiffThenGen(t *testing.T) {
 	}
 }
 
-func TestDiffWritesPolicies(t *testing.T) {
+func TestGenWritesPolicies(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "schema"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "schema", "orders.sql"), []byte(schemaSQL), 0o600))
 	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "init", "-dir", dir}))
 
-	policy := "db://shop/orders:\n  select: { state: { eq: paid } }\n"
+	policy := "db://shop/orders:\n  select: { state: { eq: paid } }\nfiles://media/*:\n  select: true\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(policy), 0o600))
+
+	// The policies go out with durabase gen, not in a migration.
 	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "policies", "-dir", dir}))
+	assert.NoFileExists(t, filepath.Join(dir, "migrations", "0002_policies.sql"))
 
-	text, err := os.ReadFile(filepath.Join(dir, "migrations", "0002_policies.sql"))
+	out := filepath.Join(dir, "worker", "durabase.gen.ts")
+	require.NoError(t, run(ctx, []string{"gen", "-dir", dir, "-out", out}))
+	text, err := os.ReadFile(out)
 	require.NoError(t, err)
-	assert.Contains(t, string(text), `INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://shop/orders', 'select', '{"state":{"eq":"paid"}}');`)
-
-	// The policies are in the migrations now, so a second diff writes no file.
-	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "again", "-dir", dir}))
-	assert.NoFileExists(t, filepath.Join(dir, "migrations", "0003_again.sql"))
+	assert.Contains(t, string(text), `{ uri: "db://shop/orders", action: "select", rule: "{\"state\":{\"eq\":\"paid\"}}" },`)
+	assert.Contains(t, string(text), `{ uri: "files://media/*", action: "select", rule: "true" },`)
 
 	// A typo fails in the CLI.
 	bad := "db://shop/orders:\n  select: { stat: { eq: paid } }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(bad), 0o600))
-	err = run(ctx, []string{"db", "diff", "-f", "bad", "-dir", dir})
+	err = run(ctx, []string{"gen", "-dir", dir, "-out", out})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "policies.yaml:2: db://shop/orders select: orders has no column stat")
 }

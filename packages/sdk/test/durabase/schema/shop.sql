@@ -27,3 +27,9 @@ create table webhook_events (
   event_id text primary key,
   received_at integer not null
 );
+
+-- A table with no rowid. The check after a write finds its rows by the key.
+create table tags (
+  name text primary key,
+  owner text not null
+) without rowid;
