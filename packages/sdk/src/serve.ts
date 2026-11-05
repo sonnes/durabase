@@ -1,7 +1,6 @@
 // Serves the durabase routes of a Worker. Each URI has one route:
 //
 //   POST /db/<namespace>          the Database DO, as JSON-RPC 2.0
-//   POST /mail/<address>          the Mailbox DO, as JSON-RPC 2.0
 //   POST /auth/<realm>            sign-in, sign-out and the current user
 //   GET  /auth/<realm>/callback   the link of the sign-in email
 //   /files/<bucket>/<name>        downloads and uploads (files/serve.ts)
@@ -25,7 +24,7 @@ import { BINDINGS, parseRoute, type Address } from "./uri";
 export interface ServeOptions {
   // The names of the bindings. The defaults are DB, MAILBOX, AUTH, FILES
   // and FILES_BUCKET.
-  bindings?: { db?: string; mail?: string; auth?: string } & FilesBindings;
+  bindings?: { db?: string; auth?: string } & FilesBindings;
   // The realm of the sessions: the name of the Auth DO. The default is "main".
   realm?: string;
   // The binding of the secret. The default is "DURABASE_AUTH_SECRET".
@@ -53,16 +52,15 @@ export async function serve(request: Request, env: unknown, options: ServeOption
       return serveAuth(request, route, realm, secret, authDO);
     case "files":
       return serveFiles(request, e, route, options.bindings ?? {}, secret, () => authenticate(request, secret, authDO));
-    case "db":
-    case "mail": {
+    case "db": {
       if (route.path.length > 0) return undefined;
       if (request.method !== "POST") return rpcError(null, ErrorCode.InvalidRequest, "use POST with a JSON-RPC 2.0 body", 405);
       const body = await readJson(request);
       if (body === undefined) return rpcError(null, ErrorCode.ParseError, "the body is not JSON");
       const session = await authenticate(request, secret, authDO);
-      const name = route.scheme === "db" ? (options.bindings?.db ?? BINDINGS.db) : (options.bindings?.mail ?? BINDINGS.mail);
+      const name = options.bindings?.db ?? BINDINGS.db;
       const ns = binding<DurableObjectNamespace>(e, name);
-      const hint = route.scheme === "db" && options.locationHint ? { locationHint: options.locationHint } : undefined;
+      const hint = options.locationHint ? { locationHint: options.locationHint } : undefined;
       const stub = ns.get(ns.idFromName(route.authority), hint) as unknown as DatabaseRpc;
       const result = await stub.rpcAs(body, session.auth);
       return withCookies(result === undefined ? new Response(null, { status: 204 }) : Response.json(result), session.cookies);
@@ -101,7 +99,8 @@ async function serveAuth(
     case "signInWithOtp": {
       if (typeof params.email !== "string") return fail({ code: ErrorCode.InvalidParams, message: "signInWithOtp needs an email" });
       // Workers RPC types drop the unknown data of an error, so the type comes back here.
-      const r = (await auth.signIn(params.email, new URL(request.url).origin)) as { error?: RpcError };
+      const next = typeof params.next === "string" ? safePath(params.next) : undefined;
+      const r = (await auth.signIn(params.email, new URL(request.url).origin, next)) as { error?: RpcError };
       return r.error ? fail(r.error) : answer(null);
     }
     case "verifyOtp": {

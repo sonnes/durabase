@@ -77,9 +77,10 @@ export function auth(options: AuthOptions) {
 
     // Sends one email with a link and a 6-digit code. An error comes back as
     // a value, because Workers RPC drops the code of a thrown error.
-    async signIn(email: string, origin: string): Promise<{ error?: RpcError }> {
+    // next is the path after sign-in, such as "/orders". serve() checks it.
+    async signIn(email: string, origin: string, next?: string): Promise<{ error?: RpcError }> {
       try {
-        await this.#signIn(email, origin);
+        await this.#signIn(email, origin, next);
         return {};
       } catch (error) {
         if (error instanceof DurabaseError) return { error: error.toJSON() };
@@ -87,7 +88,7 @@ export function auth(options: AuthOptions) {
       }
     }
 
-    async #signIn(email: string, origin: string): Promise<void> {
+    async #signIn(email: string, origin: string, next: string | undefined): Promise<void> {
       const address = normalEmail(email);
       const token = randomToken();
       const code = randomCode();
@@ -98,7 +99,8 @@ export function auth(options: AuthOptions) {
       });
 
       const site = (options.site ?? origin).replace(/\/+$/, "");
-      const link = `${site}/auth/${encodeURIComponent(this.realm)}/callback?token=${token}`;
+      const after = next && next !== "/" ? `&next=${encodeURIComponent(next)}` : "";
+      const link = `${site}/auth/${encodeURIComponent(this.realm)}/callback?token=${token}${after}`;
       const message = render({ email: address, link, code, minutes: CODE_MINUTES });
       const ns = this.binding<DurableObjectNamespace>(mailboxBinding);
       const mailbox = ns.get(ns.idFromName(options.from)) as unknown as Stub;

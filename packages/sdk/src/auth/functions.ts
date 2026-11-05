@@ -105,7 +105,8 @@ export const verify = fn((tx, args: z.input<typeof VerifyInput>): Verified => {
 const RefreshInput = z.object({ sid: z.string(), counter: z.number().int().nonnegative() });
 
 // Moves the counter of the session on by 1. The token of the last step
-// still works for 1 minute, and gets the current counter.
+// still works for 1 minute, and gets the current counter. An older token is
+// a copy, of a thief or of the owner, so it ends the session.
 export const refresh = fn((tx, args: z.input<typeof RefreshInput>): Refreshed => {
   const a = parse(RefreshInput, args);
   const s = tx
@@ -122,6 +123,7 @@ export const refresh = fn((tx, args: z.input<typeof RefreshInput>): Refreshed =>
   } else if (a.counter === s.counter - 1 && tx.now - s.refreshed_at < REUSE_MS) {
     counter = s.counter;
   } else {
+    tx.from("sessions").update({ revoked_at: tx.now }).eq("id", a.sid).run();
     return { ok: false };
   }
   const user = tx.from("users").select("id", "email", "groups").eq("id", s.user_id).maybeOne();

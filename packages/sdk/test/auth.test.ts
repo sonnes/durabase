@@ -123,17 +123,25 @@ describe("sign-in with a code", () => {
 describe("sign-in with the link", () => {
   it("sets the cookies and goes to the next path", async () => {
     const email = freshEmail();
-    await authCall("signInWithOtp", { email });
+    await authCall("signInWithOtp", { email, next: "/orders" });
     const { link } = await lastEmail(email);
     const url = new URL(link);
-    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}&next=/orders`, { redirect: "manual" });
+    expect(url.searchParams.get("next")).toBe("/orders");
+    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual" });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/orders");
     expect((await whoami(cookieHeader(res))).auth).toMatchObject({ role: "authenticated", email });
 
     const again = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual" });
-    expect(again.headers.get("location")).toBe("/?auth_error=invalid");
+    expect(again.headers.get("location")).toBe("/orders?auth_error=invalid");
     expect(again.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("leaves a next path of another site out of the link", async () => {
+    const email = freshEmail();
+    await authCall("signInWithOtp", { email, next: "//evil.example" });
+    const { link } = await lastEmail(email);
+    expect(new URL(link).searchParams.has("next")).toBe(false);
   });
 
   it("goes only to a path on this site", async () => {
@@ -180,6 +188,33 @@ describe("the session", () => {
     const old = await whoami(refreshOnly);
     expect(old.auth).toEqual({ role: "anon" });
     expect(old.res.headers.getSetCookie().every((c) => c.includes("Max-Age=0"))).toBe(true);
+  });
+
+  it("ends the session when an old refresh token comes back", async () => {
+    const cookie = await signIn(freshEmail());
+    const stolen = cookie.split("; ").filter((c) => c.startsWith("__Host-durabase-refresh="))[0];
+    const first = await whoami(stolen);
+    const current = cookieHeader(first.res)
+      .split("; ")
+      .filter((c) => c.startsWith("__Host-durabase-refresh="))[0];
+    const second = await whoami(current);
+    const latest = cookieHeader(second.res)
+      .split("; ")
+      .filter((c) => c.startsWith("__Host-durabase-refresh="))[0];
+
+    // Two steps old: a copy of the token. The session ends for each token.
+    expect((await whoami(stolen)).auth).toEqual({ role: "anon" });
+    expect((await whoami(latest)).auth).toEqual({ role: "anon" });
+  });
+
+  it("signs a standard HS256 JWT", async () => {
+    const token = await signAccess(SECRET, { id: "u1", email: "a@example.com", groups: [] }, "s1");
+    const [header, payload, sig] = token.split(".");
+    expect(JSON.parse(atob(header))).toEqual({ alg: "HS256", typ: "JWT" });
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${header}.${payload}`)));
+    const expected = btoa(String.fromCharCode(...mac)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    expect(sig).toBe(expected);
   });
 
   it("refuses a refresh token that the server did not sign", async () => {

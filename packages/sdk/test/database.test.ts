@@ -261,6 +261,8 @@ describe("the /db/<namespace> route", () => {
   it("answers 404 for a path that is not a durabase route", async () => {
     expect((await SELF.fetch("https://test/db/http/orders", { method: "POST", body: "{}" })).status).toBe(404);
     expect((await SELF.fetch("https://test/db/Not_A_Name!", { method: "POST", body: "{}" })).status).toBe(404);
+    // serve() has no route for a Mailbox.
+    expect((await SELF.fetch("https://test/mail/orders@shop.example", { method: "POST", body: "{}" })).status).toBe(404);
     expect((await SELF.fetch("https://test/other", { method: "POST", body: "{}" })).status).toBe(404);
   });
 

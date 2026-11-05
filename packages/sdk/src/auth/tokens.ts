@@ -104,14 +104,16 @@ export async function signAccess(
     exp: iat + ACCESS_SECONDS,
   };
   const body = `${JWT_HEADER}.${base64url(encoder.encode(JSON.stringify(claims)))}`;
-  return `${body}.${await sign(secret, `access.${body}`)}`;
+  // A standard HS256 JWT. Each other HMAC input of this file starts with a
+  // word and a dot, so no other value can pass as a JWT.
+  return `${body}.${await sign(secret, body)}`;
 }
 
 // The caller of an access token, or undefined if the token is not valid.
 export async function verifyAccess(secret: string, token: string, now = Date.now()): Promise<(Auth & { role: "authenticated"; sid: string }) | undefined> {
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== JWT_HEADER) return undefined;
-  if (!(await verify(secret, `access.${parts[0]}.${parts[1]}`, parts[2]))) return undefined;
+  if (!(await verify(secret, `${parts[0]}.${parts[1]}`, parts[2]))) return undefined;
   let claims: AccessClaims;
   try {
     claims = JSON.parse(new TextDecoder().decode(fromBase64url(parts[1]))) as AccessClaims;

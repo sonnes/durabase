@@ -252,8 +252,9 @@ export class AuthClient {
     private readonly realm: string,
   ) {}
 
-  // Sends one email with a link and a 6-digit code.
-  signInWithOtp(args: { email: string }): Promise<AuthResult<null>> {
+  // Sends one email with a link and a 6-digit code. The link goes to next, a
+  // path on this site. The default is "/".
+  signInWithOtp(args: { email: string; next?: string }): Promise<AuthResult<null>> {
     return this.call("signInWithOtp", args);
   }
 
