@@ -1,6 +1,6 @@
 // Type checks only. `pnpm typecheck` compiles this file. Nothing runs it.
 
-import { createClient } from "../src";
+import { createClient, type FilesClient } from "../src";
 import type { Database } from "./durabase.gen";
 
 declare const ns: DurableObjectNamespace;
@@ -43,3 +43,10 @@ export async function checks() {
   // @ts-expect-error: "notAFunction" is not a function.
   await db.rpc("notAFunction");
 }
+
+// A files URI gives a FilesClient. The env goes in the options.
+declare const workerEnv: Cloudflare.Env;
+const media: FilesClient = createClient("files://media", { env: workerEnv, origin: "https://shop.example" });
+void media;
+// @ts-expect-error the env is not the second argument
+createClient("db://shop", workerEnv, {});

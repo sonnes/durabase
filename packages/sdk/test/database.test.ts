@@ -228,7 +228,7 @@ describe("the /db/<namespace> route", () => {
     SELF.fetch("https://test/db/http", { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body), ...init });
 
   it("gives anon no rows of a table with no policy", async () => {
-    await createClient<Database>("db://http", env).from("counters").insert({ name: "secret", value: 1 });
+    await createClient<Database>("db://http", { env }).from("counters").insert({ name: "secret", value: 1 });
     const res = await post({ jsonrpc: "2.0", id: 1, method: "select", params: { table: "counters" } });
     expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 1, result: { rows: [], count: 0 } });
   });
@@ -267,7 +267,7 @@ describe("the /db/<namespace> route", () => {
   });
 
   it("works with the client and a URI", async () => {
-    const db = createClient<Database>("db://http", undefined, { origin: "https://test", fetch: (i, init) => SELF.fetch(i, init) });
+    const db = createClient<Database>("db://http", { origin: "https://test", fetch: (i, init) => SELF.fetch(i, init) });
     const { data } = await db.rpc("whoami");
     expect(data).toEqual({ role: "anon" });
   });

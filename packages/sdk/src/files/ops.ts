@@ -115,13 +115,17 @@ export async function head(fe: FilesEnv, auth: Auth, a: { bucket: string; name: 
 
 // A link to one version of a private file, for expiresIn seconds. A new
 // upload or a remove stops the link.
-export async function signedUrl(fe: FilesEnv, secret: string, a: { bucket: string; name: string; expiresIn: number }): Rpc<string> {
+export async function signedUrl(
+  fe: FilesEnv,
+  secret: string,
+  a: { origin: string; bucket: string; name: string; expiresIn: number },
+): Rpc<string> {
   const r = await head(fe, SERVICE, a);
   if (!r.ok) return r;
   if (!r.value) return { ok: false, error: notFound(a.bucket, a.name) };
   const exp = Math.floor(Date.now() / 1000) + a.expiresIn;
   const sig = await signFile(secret, `${a.bucket}/${a.name}/${r.value.version}`, exp);
-  return { ok: true, value: `${filePath(a.bucket, a.name)}?v=${r.value.version}&exp=${exp}&sig=${sig}` };
+  return { ok: true, value: `${a.origin}${filePath(a.bucket, a.name)}?v=${r.value.version}&exp=${exp}&sig=${sig}` };
 }
 
 export function notFound(bucket: string, name: string): RpcError {

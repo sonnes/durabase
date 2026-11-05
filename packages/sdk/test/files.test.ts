@@ -11,8 +11,8 @@ import { signAccess } from "../src/auth/tokens";
 //   printables   private, PDFs. A buyer can read them.
 
 const ORIGIN = "https://test";
-const media = createClient("files://media", env);
-const printables = createClient("files://printables", env);
+const media = createClient("files://media", { env });
+const printables = createClient("files://printables", { env, origin: ORIGIN });
 
 function freshName(dir = "avatars"): string {
   return `${dir}/${crypto.randomUUID().slice(0, 8)}.txt`;
@@ -28,7 +28,7 @@ async function put(name: string, body: string, headers: Record<string, string> =
     headers: { "content-type": "text/plain", ...headers },
     body,
   });
-  return { status: res.status, body: (await res.json()) as { data: any; error: any } };
+  return { status: res.status, body: (await res.json()) as { result?: any; error?: any } };
 }
 
 async function rpc(bucket: string, method: string, params: object, headers: Record<string, string> = {}) {
@@ -70,17 +70,24 @@ describe("the service role", () => {
     const name = `atlas/${crypto.randomUUID().slice(0, 8)}.pdf`;
     await printables.upload(name, "%PDF-1", { contentType: "application/pdf" });
     const { data: link } = await printables.createSignedUrl(name, { expiresIn: 60 });
-    expect(link).toMatch(/^\/files\/printables\/atlas\/.+\.pdf\?v=[\w-]+&exp=\d+&sig=[\w-]+$/);
+    expect(link).toMatch(/^https:\/\/test\/files\/printables\/atlas\/.+\.pdf\?v=[\w-]+&exp=\d+&sig=[\w-]+$/);
 
-    const ok = await SELF.fetch(`${ORIGIN}${link}`);
+    const ok = await SELF.fetch(link!);
     expect(ok.status).toBe(200);
     expect(await ok.text()).toBe("%PDF-1");
 
-    const forged = await SELF.fetch(`${ORIGIN}${link!.replace(/sig=.+$/, "sig=AAAA")}`);
+    const forged = await SELF.fetch(link!.replace(/sig=.+$/, "sig=AAAA"));
     expect(forged.status).toBe(403);
 
     await printables.upload(name, "%PDF-2", { contentType: "application/pdf", upsert: true });
-    expect((await SELF.fetch(`${ORIGIN}${link}`)).status).toBe(404);
+    expect((await SELF.fetch(link!)).status).toBe(404);
+  });
+
+  it("needs the origin of the site for a signed link", async () => {
+    const name = `atlas/${crypto.randomUUID().slice(0, 8)}.pdf`;
+    await printables.upload(name, "%PDF", { contentType: "application/pdf" });
+    const noOrigin = createClient("files://printables", { env });
+    expect((await noOrigin.createSignedUrl(name, { expiresIn: 60 })).error).toMatchObject({ code: -32600 });
   });
 });
 
@@ -89,7 +96,7 @@ describe("uploads over HTTP", () => {
     const name = freshName();
     const anon = await put(name, "hi");
     expect(anon.status).toBe(403);
-    expect(anon.body.error).toEqual({ code: -32005, message: `no access to insert files://media/${name}` });
+    expect(anon.body).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32005, message: `no access to insert files://media/${name}` } });
     expect(await r2Keys(`media/${name}/`)).toEqual([]);
 
     const ok = await put(name, "hi", { authorization: await bearer("asha") });
@@ -106,8 +113,8 @@ describe("uploads over HTTP", () => {
 
     const second = await put(name, "two", { authorization: asha, "x-upsert": "true" });
     expect(second.status).toBe(200);
-    expect(second.body.data.version).not.toBe(first.body.data.version);
-    expect(await r2Keys(`media/${name}/`)).toEqual([`media/${name}/${second.body.data.version}`]);
+    expect(second.body.result.version).not.toBe(first.body.result.version);
+    expect(await r2Keys(`media/${name}/`)).toEqual([`media/${name}/${second.body.result.version}`]);
   });
 
   it("refuses a policy that does not cover the path", async () => {
@@ -169,7 +176,7 @@ describe("downloads", () => {
 describe("the files client over HTTP", () => {
   it("uploads and lists with the session of the page", async () => {
     const auth = await bearer("asha");
-    const client = createClient("files://media", undefined, {
+    const client = createClient("files://media", {
       origin: ORIGIN,
       fetch: (input, init) => SELF.fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), authorization: auth } }),
     });

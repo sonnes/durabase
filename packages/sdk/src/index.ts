@@ -5,7 +5,7 @@ export { migrate, type Migration } from "./migrate";
 export { DurabaseError, ErrorCode, type RpcError, type RpcRequest, type RpcResponse } from "./protocol";
 export { serve, type ServeOptions } from "./serve";
 export { files, type Bucket, type FileRow, type FilesDO, type FilesOptions } from "./files/files";
-export { FilesClient, type FileResult, type FilesClientOptions, type UploadOptions } from "./files/client";
+export { FilesClient, type UploadOptions } from "./files/client";
 export { auth, type AuthDO, type AuthOptions, type SignInEmail } from "./auth/auth";
 export type { User } from "./auth/functions";
 export type { Auth } from "./caller";

@@ -4,6 +4,8 @@
 //   GET  /files/<bucket>/<name>?v=…&exp=…&sig=…         a signed link: no DO call
 //   GET  /files/<bucket>/<name>                         the current version, with the select rule
 //   PUT  /files/<bucket>/<name>                         an upload. The header x-upsert: true overwrites.
+//
+// Each JSON answer is JSON-RPC 2.0, as on /db and /auth.
 //   POST /files/<bucket>                                list and remove, as JSON-RPC 2.0
 
 import type { Session } from "../auth/session";
@@ -86,7 +88,7 @@ function respond(request: Request, object: R2ObjectBody | null, cache: string): 
 async function put(request: Request, fe: FilesEnv, bucket: string, name: string, session: () => Promise<Session>): Promise<Response> {
   const size = Number(request.headers.get("content-length"));
   if (!request.body || !Number.isSafeInteger(size) || size < 0) {
-    return json({ data: null, error: { code: ErrorCode.InvalidParams, message: "an upload needs a body with a Content-Length" } }, 411);
+    return json({ jsonrpc: "2.0", id: null, error: { code: ErrorCode.InvalidParams, message: "an upload needs a body with a Content-Length" } }, 411);
   }
   const s = await session();
   const r = await upload(fe, s.auth, {
@@ -97,7 +99,7 @@ async function put(request: Request, fe: FilesEnv, bucket: string, name: string,
     type: request.headers.get("content-type")?.split(";")[0].trim() || "application/octet-stream",
     upsert: request.headers.get("x-upsert") === "true",
   });
-  const res = r.ok ? json({ data: r.value, error: null }) : json({ data: null, error: r.error }, status(r.error));
+  const res = r.ok ? json({ jsonrpc: "2.0", id: null, result: r.value }) : json({ jsonrpc: "2.0", id: null, error: r.error }, status(r.error));
   return withCookies(res, s.cookies);
 }
 

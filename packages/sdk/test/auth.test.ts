@@ -26,7 +26,7 @@ async function authCall(method: string, params: object = {}, headers: Record<str
 
 // The link and the code of the last sign-in email to this address.
 async function lastEmail(email: string): Promise<{ link: string; code: string }> {
-  const mail = createClient<Mailbox>("mail://orders@shop.example", env);
+  const mail = createClient<Mailbox>("mail://orders@shop.example", { env });
   const { data } = await mail
     .from("messages")
     .select("text", "to_addresses")
@@ -277,7 +277,7 @@ describe("the client", () => {
       }
       return res;
     };
-    const db = createClient("db://client-test", undefined, { origin: ORIGIN, fetch: fetchWithJar });
+    const db = createClient("db://client-test", { origin: ORIGIN, fetch: fetchWithJar });
     const email = freshEmail();
     expect((await db.auth.signInWithOtp({ email })).error).toBeNull();
     const { code } = await lastEmail(email);
@@ -289,8 +289,12 @@ describe("the client", () => {
     expect((await db.auth.getUser()).data).toBeNull();
   });
 
+  it("needs an env for a Mailbox, which has no route", () => {
+    expect(() => createClient("mail://orders@shop.example")).toThrow("mail://orders@shop.example needs { env }");
+  });
+
   it("has no session with a binding", async () => {
-    const db = createClient("db://shop", env);
+    const db = createClient("db://shop", { env });
     expect((await db.auth.getUser()).error).toMatchObject({ code: -32600 });
   });
 });

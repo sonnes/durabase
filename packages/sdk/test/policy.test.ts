@@ -13,7 +13,7 @@ const anon: Auth = { role: "anon" };
 // A namespace with two orders: one of asha and one of ravi.
 async function shop() {
   const name = crypto.randomUUID();
-  const service = createClient<Database>(`db://${name}`, env);
+  const service = createClient<Database>(`db://${name}`, { env });
   await service.from("orders").insert([
     { id: "LP-1", amount_paise: 100, customer: "{}", customer_email: "asha@example.com" },
     { id: "LP-2", amount_paise: 200, customer: "{}", customer_email: "ravi@example.com" },
@@ -175,7 +175,7 @@ describe("a batch", () => {
       asha,
     );
     expect(out[1]).toMatchObject({ error: { code: -32005 } });
-    const { data } = await createClient<Database>(`db://${name}`, env).from("orders").select("id");
+    const { data } = await createClient<Database>(`db://${name}`, { env }).from("orders").select("id");
     expect(data).toEqual([]);
   });
 });

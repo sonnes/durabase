@@ -1,7 +1,7 @@
 // The JS client, in the style of supabase-js:
 //
-//   const db = createClient<Database>("db://shop");       // in the browser: POST /db/shop
-//   const db = createClient<Database>("db://shop", env);  // in the Worker: the binding DB
+//   const db = createClient<Database>("db://shop");           // in the browser: POST /db/shop
+//   const db = createClient<Database>("db://shop", { env });  // in the Worker: the binding DB
 //   const { data, error } = await db.from("orders").select("id", "state").eq("state", "paid");
 //   const { data: order } = await db.rpc("create_order", { items, customer });
 //
@@ -12,7 +12,8 @@
 import { DurabaseError, ErrorCode, FUNCTION_PREFIX, type Call, type RowsResult, type RpcBody, type RpcResponse } from "./protocol";
 import { Query, type ClientTable } from "./query";
 import type { AnyDatabase, DatabaseShape, Result, TableName } from "./types";
-import { FilesClient, type FilesClientOptions } from "./files/client";
+import { FilesClient } from "./files/client";
+import type { FilesBindings } from "./files/ops";
 import { BINDINGS, parseUri, routeOf } from "./uri";
 
 type Transport = (body: RpcBody) => Promise<RpcResponse | RpcResponse[] | undefined>;
@@ -27,13 +28,17 @@ export type Target =
   | { fetcher: { fetch(input: RequestInfo, init?: RequestInit): Promise<Response> }; url?: string };
 
 export interface ClientOptions {
+  // In a Worker: the env. The client then calls the binding of the scheme,
+  // as the service role, and the policies do not apply.
+  env?: object;
   // The name of the Database DO. One name is one database. A URI gives the
   // name itself.
   name?: string;
   // Where Cloudflare creates the DO, on the first call only.
   locationHint?: DurableObjectLocationHint;
-  // For a URI with no env: the origin of the site, such as
-  // "https://littleplay.co". The default is the origin of the page.
+  // The origin of the site, such as "https://littleplay.co". Over HTTP, the
+  // default is the origin of the page. createSignedUrl needs it for a full
+  // link.
   origin?: string;
   // For a URI with no env: the fetch function. The default is fetch.
   fetch?: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
@@ -42,6 +47,11 @@ export interface ClientOptions {
   binding?: string;
   // The realm of db.auth. The default is "main".
   realm?: string;
+  // For files:// with an env: the bindings of the Files DO and the bucket.
+  bindings?: FilesBindings;
+  // For files:// with an env: the binding of the secret. The default is
+  // DURABASE_AUTH_SECRET.
+  secret?: string;
 }
 
 export const DEFAULT_NAME = "db";
@@ -66,9 +76,12 @@ interface Http {
   origin: string;
 }
 
-function uriTransport(uri: string, env: object | undefined, options: ClientOptions): { transport: Transport; http?: Http } {
+function uriTransport(uri: string, options: ClientOptions): { transport: Transport; http?: Http } {
   const address = parseUri(uri);
+  const env = options.env;
   if (address.path.length > 0) throw new TypeError(`a client needs a store URI, such as db://shop, not ${uri}`);
+  // serve() has no route for a Mailbox, so only code with the binding can call it.
+  if (address.scheme === "mail" && !env) throw new TypeError(`${uri} needs { env }: only a Worker can call a Mailbox`);
   if (env) {
     const ns = (env as Record<string, unknown>)[options.binding ?? BINDINGS[address.scheme]] as AnyNamespace | undefined;
     if (!ns) throw new TypeError(`the env has no binding ${options.binding ?? BINDINGS[address.scheme]} for ${uri}`);
@@ -161,9 +174,9 @@ export class DurabaseClient<DB extends DatabaseShape = AnyDatabase> {
   // service role and has no session.
   readonly auth: AuthClient;
 
-  constructor(target: Target, options: ClientOptions = {}, env?: object) {
+  constructor(target: Target, options: ClientOptions = {}) {
     if (typeof target === "string") {
-      const t = uriTransport(target, env, options);
+      const t = uriTransport(target, options);
       this.#transport = t.transport;
       this.auth = new AuthClient(t.http, options.realm ?? "main");
     } else {
@@ -215,24 +228,18 @@ export class DurabaseClient<DB extends DatabaseShape = AnyDatabase> {
 }
 
 // createClient("db://shop")                  over HTTP, to /db/shop on this site
-// createClient("db://shop", env)             with the binding DB, as the service role
+// createClient("db://shop", { env })         with the binding DB, as the service role
 // createClient(env.DB, { name: "shop" })     with a namespace, as the service role
 // createClient("files://media")             the client of one bucket
-export function createClient(uri: `files://${string}`, env?: object, options?: FilesClientOptions): FilesClient;
-export function createClient<DB extends DatabaseShape = AnyDatabase>(uri: string, env?: object, options?: ClientOptions): DurabaseClient<DB>;
-export function createClient<DB extends DatabaseShape = AnyDatabase>(target: Exclude<Target, string>, options?: ClientOptions): DurabaseClient<DB>;
-export function createClient<DB extends DatabaseShape = AnyDatabase>(
-  target: Target,
-  a?: object,
-  b?: ClientOptions & FilesClientOptions,
-): DurabaseClient<DB> | FilesClient {
+export function createClient(uri: `files://${string}`, options?: ClientOptions): FilesClient;
+export function createClient<DB extends DatabaseShape = AnyDatabase>(target: Target, options?: ClientOptions): DurabaseClient<DB>;
+export function createClient<DB extends DatabaseShape = AnyDatabase>(target: Target, options: ClientOptions = {}): DurabaseClient<DB> | FilesClient {
   if (typeof target === "string" && target.startsWith("files://")) {
     const address = parseUri(target);
     if (address.path.length > 0) throw new TypeError(`a files client needs a bucket URI, such as files://media, not ${target}`);
-    return new FilesClient(address.authority, a, b);
+    return new FilesClient(address.authority, options);
   }
-  if (typeof target === "string") return new DurabaseClient<DB>(target, b, a);
-  return new DurabaseClient<DB>(target, a as ClientOptions | undefined);
+  return new DurabaseClient<DB>(target, options);
 }
 
 export interface AuthUser {
@@ -242,7 +249,6 @@ export interface AuthUser {
   groups: string[];
 }
 
-export type AuthResult<T> = { data: T; error: null } | { data: null; error: { code: number; message: string; data?: unknown } };
 
 // db.auth: the calls of POST /auth/<realm>. The Worker keeps the session in
 // HttpOnly cookies, so script on the page never sees a token.
@@ -254,28 +260,29 @@ export class AuthClient {
 
   // Sends one email with a link and a 6-digit code. The link goes to next, a
   // path on this site. The default is "/".
-  signInWithOtp(args: { email: string; next?: string }): Promise<AuthResult<null>> {
+  signInWithOtp(args: { email: string; next?: string }): Promise<Result<null>> {
     return this.call("signInWithOtp", args);
   }
 
   // Signs in with the code from the email.
-  async verifyOtp(args: { email: string; code: string }): Promise<AuthResult<AuthUser>> {
+  async verifyOtp(args: { email: string; code: string }): Promise<Result<AuthUser>> {
     const r = await this.call<{ user: Omit<AuthUser, "role"> }>("verifyOtp", args);
-    return r.error ? r : { data: { ...r.data.user, role: "authenticated" }, error: null };
+    if (r.error || !r.data) return failed(r.error ?? { code: ErrorCode.InternalError, message: "no user" });
+    return { data: { ...r.data.user, role: "authenticated" }, error: null, count: null };
   }
 
   // The signed-in user, or null.
-  getUser(): Promise<AuthResult<AuthUser | null>> {
+  getUser(): Promise<Result<AuthUser | null>> {
     return this.call("getUser", {});
   }
 
-  signOut(): Promise<AuthResult<null>> {
+  signOut(): Promise<Result<null>> {
     return this.call("signOut", {});
   }
 
-  private async call<T>(method: string, params: object): Promise<AuthResult<T>> {
+  private async call<T>(method: string, params: object): Promise<Result<T>> {
     if (!this.http) {
-      return { data: null, error: { code: ErrorCode.InvalidRequest, message: "db.auth needs a client over HTTP, such as createClient(\"db://shop\")" } };
+      return failed({ code: ErrorCode.InvalidRequest, message: "db.auth needs a client over HTTP, such as createClient(\"db://shop\")" });
     }
     const res = await this.http.fetch(`${this.http.origin}/auth/${encodeURIComponent(this.realm)}`, {
       method: "POST",
@@ -283,7 +290,7 @@ export class AuthClient {
       body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
     });
     const r = (await res.json()) as RpcResponse;
-    if ("error" in r) return { data: null, error: r.error };
-    return { data: r.result as T, error: null };
+    if ("error" in r) return failed(r.error);
+    return { data: r.result as T, error: null, count: null };
   }
 }
