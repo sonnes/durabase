@@ -24,7 +24,7 @@ export interface MailboxOptions {
 export function mailbox(options: MailboxOptions = {}) {
   const emailBinding = options.email ?? "EMAIL";
   const bucketBinding = options.bucket ?? "MAILBOX_FILES";
-  const Base = database({ migrations, functions, rows: "read" });
+  const Base = database({ migrations, functions, rows: "read", scheme: "mail" });
 
   return class Mailbox extends Base {
     // The DO name is the address. createClient() and receiveEmail() get the
