@@ -20,8 +20,8 @@ Usage:
   durabase gen [-dir durabase] [-out durabase/durabase.gen.ts] [-functions <dir>]
   durabase version
 
-The project folder (-dir) holds schema/*.sql, the desired state that you
-edit, and migrations/*.sql, which durabase writes.
+The project folder (-dir) holds schema/*.sql and policies.yaml, the desired
+state that you edit, and migrations/*.sql, which durabase writes.
 `
 
 func main() {

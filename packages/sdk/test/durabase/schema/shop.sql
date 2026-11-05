@@ -5,7 +5,8 @@ create table orders (
   amount_paise integer not null,
   customer text not null,
   created_at integer not null default 0,
-  notes text
+  notes text,
+  customer_email text
 );
 create index orders_created on orders (created_at);
 

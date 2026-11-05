@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/sonnes/durabase/cli/internal/diff"
 	"github.com/sonnes/durabase/cli/internal/migrations"
+	"github.com/sonnes/durabase/cli/internal/policies"
 	"github.com/sonnes/durabase/cli/internal/schema"
 )
 
@@ -55,11 +57,36 @@ func dbDiff(ctx context.Context, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+
+	policyStatements, err := diffPolicies(ctx, *dir, snap, current)
+	if err != nil {
+		return err
+	}
+	res.Statements = append(res.Statements, policyStatements...)
+
 	if res.Empty() {
-		okf("No changes. The schema files and the migrations agree.")
+		okf("No changes. The schema files, the policies and the migrations agree.")
 		return nil
 	}
 	return writeMigration(*dir, *name, files, res)
+}
+
+// diffPolicies reads policies.yaml of the project, checks it against snap,
+// and returns the statements that store its rules.
+func diffPolicies(ctx context.Context, dir string, snap *schema.Snapshot, current *sql.DB) ([]string, error) {
+	path := filepath.Join(dir, "policies.yaml")
+	rules, err := policies.Load(path, snap)
+	if err != nil {
+		return nil, err
+	}
+	if rules != nil {
+		count := fmt.Sprintf("%d policies", len(rules))
+		if len(rules) == 1 {
+			count = "1 policy"
+		}
+		okf("Read %s (%s)", path, count)
+	}
+	return policies.Diff(ctx, current, rules)
 }
 
 func writeMigration(dir, name string, files []migrations.File, res diff.Result) error {

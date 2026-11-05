@@ -1,0 +1,21 @@
+# The policies of the test schema. Each test uses its own namespace, so each
+# key has "*" for the namespace.
+
+db://*/orders:
+  select: { customer_email: { eq: $auth.email } }
+  insert: { customer_email: { eq: $auth.email } }
+  update: { customer_email: { eq: $auth.email } }
+
+db://*/orders#customer:
+  select: false
+
+db://*/order_items:
+  select:
+    orders:
+      id: { eq: $row.order_id }
+      customer_email: { eq: $auth.email }
+
+db://*/counters:
+  select:
+    - { $auth.groups: { has: staff } }
+    - { name: { eq: public } }

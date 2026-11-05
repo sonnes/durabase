@@ -27,8 +27,24 @@ func Open(ctx context.Context) (*sql.DB, error) {
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
+
+	// The Durable Object makes this table before the migrations, and the
+	// migrations write the policies into it.
+	_, err = db.ExecContext(ctx, PoliciesTableSQL)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
 	return db, nil
 }
+
+// PoliciesTableSQL makes the table of the policies, as the SDK does in each
+// Durable Object.
+const PoliciesTableSQL = `CREATE TABLE _durabase_policies (
+  uri TEXT NOT NULL,
+  action TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  PRIMARY KEY (uri, action)
+)`
 
 // Exec runs the statements in one transaction, as the Durable Object does
 // for one migration.

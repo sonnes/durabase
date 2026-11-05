@@ -3,6 +3,7 @@ module github.com/sonnes/durabase/cli
 go 1.26.0
 
 require (
+	github.com/goccy/go-yaml v1.19.2
 	github.com/sqldef/sqldef/v3 v3.11.29
 	github.com/stretchr/testify v1.12.1
 	modernc.org/sqlite v1.61.1
@@ -10,7 +11,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect

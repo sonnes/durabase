@@ -60,6 +60,33 @@ func TestDiffThenGen(t *testing.T) {
 	}
 }
 
+func TestDiffWritesPolicies(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "schema"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "schema", "orders.sql"), []byte(schemaSQL), 0o600))
+	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "init", "-dir", dir}))
+
+	policy := "db://shop/orders:\n  select: { state: { eq: paid } }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(policy), 0o600))
+	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "policies", "-dir", dir}))
+
+	text, err := os.ReadFile(filepath.Join(dir, "migrations", "0002_policies.sql"))
+	require.NoError(t, err)
+	assert.Contains(t, string(text), `INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://shop/orders', 'select', '{"state":{"eq":"paid"}}');`)
+
+	// The policies are in the migrations now, so a second diff writes no file.
+	require.NoError(t, run(ctx, []string{"db", "diff", "-f", "again", "-dir", dir}))
+	assert.NoFileExists(t, filepath.Join(dir, "migrations", "0003_again.sql"))
+
+	// A typo fails in the CLI.
+	bad := "db://shop/orders:\n  select: { stat: { eq: paid } }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "policies.yaml"), []byte(bad), 0o600))
+	err = run(ctx, []string{"db", "diff", "-f", "bad", "-dir", dir})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "policies.yaml:2: db://shop/orders select: orders has no column stat")
+}
+
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name    string

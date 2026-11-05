@@ -50,6 +50,7 @@ export type Tables = {
       customer: string;
       created_at: number;
       notes: string | null;
+      customer_email: string | null;
     };
     insert: {
       id: string;
@@ -58,6 +59,7 @@ export type Tables = {
       customer: string;
       created_at?: number;
       notes?: string | null;
+      customer_email?: string | null;
     };
     update: {
       id?: string;
@@ -66,6 +68,7 @@ export type Tables = {
       customer?: string;
       created_at?: number;
       notes?: string | null;
+      customer_email?: string | null;
     };
     relationships: {
       order_items: "many";
@@ -110,6 +113,19 @@ export const migrations: Migration[] = [
     name: "notes",
     statements: [
       "ALTER TABLE \"orders\" ADD COLUMN \"notes\" text",
+    ],
+  },
+  {
+    version: 3,
+    name: "policies",
+    statements: [
+      "ALTER TABLE \"orders\" ADD COLUMN \"customer_email\" text",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/counters', 'select', '[{\"$auth.groups\":{\"has\":\"staff\"}},{\"name\":{\"eq\":\"public\"}}]')",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/order_items', 'select', '{\"orders\":{\"customer_email\":{\"eq\":\"$auth.email\"},\"id\":{\"eq\":\"$row.order_id\"}}}')",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/orders', 'insert', '{\"customer_email\":{\"eq\":\"$auth.email\"}}')",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/orders', 'select', '{\"customer_email\":{\"eq\":\"$auth.email\"}}')",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/orders', 'update', '{\"customer_email\":{\"eq\":\"$auth.email\"}}')",
+      "INSERT OR REPLACE INTO _durabase_policies (uri, action, rule) VALUES ('db://*/orders#customer', 'select', 'false')",
     ],
   },
 ];
