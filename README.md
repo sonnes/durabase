@@ -7,7 +7,7 @@ A typed database, mailbox, auth and file store for Cloudflare Workers, built fro
 
 You write SQL schema files, plain functions and policies. durabase writes the migrations and the TypeScript types, and it owns the Durable Objects. Your Worker exports each class in one line, and a client in the style of supabase-js reads and writes rows over JSON-RPC 2.0. A customer signs in with a link or a code from one email, and the policies decide which rows and files each caller can read and write.
 
-> **Status:** 0.0.1. The API can change in each release before 1.0.
+> **Status:** 0.0.2. The API can change in each release before 1.0.
 
 ## What You Get
 
