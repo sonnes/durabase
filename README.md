@@ -385,7 +385,34 @@ await mail.rpc("reply", { id: inbox![0].id, text: "We sent it today." });
 ```
 
 - `send()` and `reply()` write the message to the outbox. An alarm sends it. If a send fails, the alarm tries again after 1, 2, 4 and more minutes, at most 6 hours apart. After 12 tries, the message goes to the `failed` folder, with the error.
+- An error that is the same on each try, such as `E_RECIPIENT_SUPPRESSED` or `E_HEADER_NOT_ALLOWED`, moves the message to `failed` at once.
 - `reply()` sets `In-Reply-To` and `References`, so the reply stays in the thread.
+- `send()` takes `headers`. Email Service accepts the `List-*` headers, `Precedence`, `Auto-Submitted`, and each `X-*` header. `send()` refuses each other header.
+
+A newsletter gives each email a link that unsubscribes with one click. `signValue()` signs the address with a secret of the Worker, so the link needs no stored token:
+
+```ts
+import { signValue, verifyValue } from "@durabaseio/sdk";
+
+const s = await signValue(env.NEWSLETTER_SECRET, `leave:${email}`);
+const link = `https://example.com/leave?e=${encodeURIComponent(email)}&s=${s}`;
+
+await mail.rpc("send", {
+  to: email,
+  subject: "News",
+  text: `The news.\n\nUnsubscribe: ${link}`,
+  key: `issue-7:${email}`,
+  headers: {
+    "List-Unsubscribe": `<${link}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  },
+});
+
+// In the route of the link:
+const ok = await verifyValue(env.NEWSLETTER_SECRET, `leave:${email}`, s);
+```
+
+Give each kind of value its own prefix, such as `confirm:` and `leave:`. A signature for one kind is then not valid for the other.
 - The client can only select rows. Each change goes through `send`, `reply`, `mark_read` or `move`.
 - Mail to an address that is not in `addresses` gets a permanent SMTP error.
 

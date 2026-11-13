@@ -133,6 +133,14 @@ describe("send", () => {
     const { error } = await mail.rpc("send", { to: "asha@example.com", subject: "Hi" });
     expect(error?.code).toBe(-32602);
   });
+
+  it("refuses a header that Email Service does not accept", async () => {
+    const { mail } = freshMailbox();
+    for (const name of ["Message-ID", "In-Reply-To", "Received", "X-"]) {
+      const { error } = await mail.rpc("send", { to: "asha@example.com", subject: "Hi", text: "Hi", headers: { [name]: "v" } });
+      expect(error?.code, name).toBe(-32602);
+    }
+  });
 });
 
 describe("the alarm", () => {
@@ -185,9 +193,33 @@ describe("the alarm", () => {
       state.storage.sql.exec("UPDATE messages SET attempts = 11 WHERE id = ?", data!.id);
     });
 
+    await runAlarm(stub, "E_RATE_LIMIT_EXCEEDED");
+
+    expect(await row(mail, data!.id)).toMatchObject({ folder: "failed", attempts: 12, due_at: null, error: "E_RATE_LIMIT_EXCEEDED" });
+  });
+
+  it("sends the list headers of a message", async () => {
+    const { mail, stub } = freshMailbox();
+    const headers = {
+      "List-Unsubscribe": "<https://example.com/leave?e=asha%40example.com&s=abc>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      "X-Issue": "2026-11-20",
+    };
+    await mail.rpc("send", { to: "asha@example.com", subject: "News", text: "News", headers });
+
+    const sent = await runAlarm(stub);
+
+    expect(sent[0].headers).toEqual(headers);
+  });
+
+  it("moves a message to failed at once after a permanent error", async () => {
+    const { mail, stub } = freshMailbox();
+    const { data } = await mail.rpc("send", { to: "asha@example.com", subject: "Hi", text: "Hi" });
+
     await runAlarm(stub, "E_RECIPIENT_SUPPRESSED");
 
-    expect(await row(mail, data!.id)).toMatchObject({ folder: "failed", attempts: 12, due_at: null, error: "E_RECIPIENT_SUPPRESSED" });
+    expect(await row(mail, data!.id)).toMatchObject({ folder: "failed", attempts: 1, due_at: null, error: "E_RECIPIENT_SUPPRESSED" });
+    expect(await alarmOf(stub)).toBeNull();
   });
 
   it("sends nothing before the due time", async () => {

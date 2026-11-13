@@ -147,3 +147,14 @@ export async function verifyFile(secret: string, path: string, exp: number, sign
   if (!Number.isSafeInteger(exp) || exp * 1000 <= now) return false;
   return verify(secret, `file.${path}.${exp}`, signature);
 }
+
+// The signature of a value that an app puts in a link, such as the email of a
+// confirm link. The app gives each kind of value its own prefix, such as
+// "confirm:".
+export async function signValue(secret: string, value: string): Promise<string> {
+  return sign(secret, `value.${value}`);
+}
+
+export async function verifyValue(secret: string, value: string, signature: string): Promise<boolean> {
+  return verify(secret, `value.${value}`, signature);
+}

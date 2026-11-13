@@ -29,6 +29,7 @@ export type Tables = {
       error: string | null;
       created_at: number;
       sent_at: number | null;
+      headers: string | null;
     };
     insert: {
       id: string;
@@ -54,6 +55,7 @@ export type Tables = {
       error?: string | null;
       created_at: number;
       sent_at?: number | null;
+      headers?: string | null;
     };
     update: {
       id?: string;
@@ -79,6 +81,7 @@ export type Tables = {
       error?: string | null;
       created_at?: number;
       sent_at?: number | null;
+      headers?: string | null;
     };
     relationships: Record<never, never>;
   };
@@ -99,6 +102,13 @@ export const migrations: Migration[] = [
       "CREATE INDEX \"messages_folder\" on \"messages\" (\"folder\", \"created_at\")",
       "CREATE INDEX \"messages_message_id\" on \"messages\" (\"message_id\")",
       "CREATE INDEX \"messages_thread\" on \"messages\" (\"thread_id\", \"created_at\")",
+    ],
+  },
+  {
+    version: 2,
+    name: "headers",
+    statements: [
+      "ALTER TABLE \"messages\" ADD COLUMN \"headers\" text",
     ],
   },
 ];

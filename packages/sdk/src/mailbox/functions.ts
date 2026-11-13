@@ -18,6 +18,33 @@ const MAX_REFERENCES = 20;
 const Address = z.union([z.string().email(), z.object({ email: z.string().email(), name: z.string().optional() })]);
 export type Address = z.infer<typeof Address>;
 
+// The headers that Email Service accepts in send(), other than the headers of
+// a thread, which reply() sets. A send with any other header fails as a whole.
+// https://developers.cloudflare.com/email-service/reference/headers/
+const LIST_HEADERS = new Set(
+  [
+    "List-Unsubscribe",
+    "List-Unsubscribe-Post",
+    "List-Id",
+    "List-Archive",
+    "List-Help",
+    "List-Owner",
+    "List-Post",
+    "List-Subscribe",
+    "Precedence",
+    "Auto-Submitted",
+  ].map((h) => h.toLowerCase()),
+);
+const CUSTOM_HEADER = /^X-[A-Za-z0-9_-]+$/;
+
+function allowedHeader(name: string): boolean {
+  return LIST_HEADERS.has(name.toLowerCase()) || (CUSTOM_HEADER.test(name) && name.length <= 100);
+}
+
+const Headers = z
+  .record(z.string(), z.string().max(2048))
+  .refine((h) => Object.keys(h).every(allowedHeader), "a header must be a List-* header, Precedence, Auto-Submitted or X-*");
+
 const SendInput = z
   .object({
     to: z.union([Address, z.array(Address).min(1)]),
@@ -30,6 +57,7 @@ const SendInput = z
     html: z.string().optional(),
     // A second send with the same key queues nothing.
     key: z.string().min(1).optional(),
+    headers: Headers.optional(),
   })
   .refine((a) => a.text !== undefined || a.html !== undefined, "a message needs text or html");
 export type SendInput = z.input<typeof SendInput>;
@@ -113,6 +141,7 @@ export const send = fn((tx, args: SendInput): Queued => {
     subject: a.subject,
     text: a.text ?? null,
     html: a.html ?? null,
+    headers: a.headers && Object.keys(a.headers).length ? JSON.stringify(a.headers) : null,
   });
 });
 

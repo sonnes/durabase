@@ -25,6 +25,9 @@ create table messages (
   subject text not null,
   text text,
   html text,
+  -- JSON: { name: value } for the other headers of an outbound message, such
+  -- as List-Unsubscribe.
+  headers text,
   -- JSON: [{ filename, type, size, key }]. key is the R2 key of the bytes.
   attachments text,
   -- The R2 key of the raw MIME message of an inbound message.

@@ -10,6 +10,27 @@ type Row = Tables["messages"]["row"];
 // hours apart. After 12 tries, approximately one day, the row goes to
 // "failed".
 export const MAX_ATTEMPTS = 12;
+
+// A send that fails with one of these errors fails again on each try, so the
+// row goes to "failed" at once. A sender error is not here: the send works
+// after the owner sets up the domain.
+// https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+const PERMANENT = new Set([
+  "E_VALIDATION_ERROR",
+  "E_FIELD_MISSING",
+  "E_TOO_MANY_RECIPIENTS",
+  "E_TOO_MANY_ATTACHMENTS",
+  "E_RECIPIENT_NOT_ALLOWED",
+  "E_RECIPIENT_SUPPRESSED",
+  "E_CONTENT_TOO_LARGE",
+  "E_HEADER_NOT_ALLOWED",
+  "E_HEADER_USE_API_FIELD",
+  "E_HEADER_VALUE_INVALID",
+  "E_HEADER_VALUE_TOO_LONG",
+  "E_HEADER_NAME_INVALID",
+  "E_HEADERS_TOO_LARGE",
+  "E_HEADERS_TOO_MANY",
+]);
 const MAX_WAIT_MINUTES = 360;
 
 export function retryDelay(attempts: number): number {
@@ -59,7 +80,7 @@ async function sendOne(sql: SqlStorage, email: SendEmail, address: string, row: 
     const reason = errorText(error);
     console.error(`The send of message ${row.id} failed, try ${attempts}:`, reason);
 
-    if (attempts >= MAX_ATTEMPTS) {
+    if (attempts >= MAX_ATTEMPTS || PERMANENT.has(reason)) {
       sql.exec("UPDATE messages SET folder = 'failed', attempts = ?, due_at = NULL, error = ? WHERE id = ?", attempts, reason, row.id);
       return;
     }
@@ -85,7 +106,9 @@ function message(address: string, row: Row): Message {
   if (row.reply_to) m.replyTo = row.reply_to;
   if (row.text !== null) m.text = row.text;
   if (row.html !== null) m.html = row.html;
-  if (row.in_reply_to) m.headers = { "In-Reply-To": row.in_reply_to, References: row.refs ?? row.in_reply_to };
+  const headers: Record<string, string> = row.headers ? JSON.parse(row.headers) : {};
+  if (row.in_reply_to) Object.assign(headers, { "In-Reply-To": row.in_reply_to, References: row.refs ?? row.in_reply_to });
+  if (Object.keys(headers).length) m.headers = headers;
   return m as unknown as Message;
 }
 

@@ -8,6 +8,7 @@ export { files, type Bucket, type FileRow, type FilesDO, type FilesOptions } fro
 export { FilesClient, type UploadOptions } from "./files/client";
 export { auth, type AuthDO, type AuthOptions, type SignInEmail } from "./auth/auth";
 export type { User } from "./auth/functions";
+export { signValue, verifyValue } from "./auth/tokens";
 export type { Auth } from "./caller";
 export type { Database as AuthDatabase, Tables as AuthTables } from "./auth/auth.gen";
 export { parseUri, routeOf, type Scheme } from "./uri";
