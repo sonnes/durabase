@@ -5,6 +5,7 @@
 import type { Auth } from "./caller";
 import { isFunction, TxQuery, type DurabaseFunction, type Tx } from "./fn";
 import {
+  callerError,
   DurabaseError,
   ErrorCode,
   FUNCTION_PREFIX,
@@ -44,10 +45,11 @@ export function collectFunctions(module: Record<string, unknown> | undefined): M
   return out;
 }
 
-export function toRpcError(error: unknown): RpcError {
-  if (error instanceof DurabaseError) return error.toJSON();
-  const message = error instanceof Error ? error.message : String(error);
-  return { code: ErrorCode.InternalError, message };
+// The service role gets the message of each error. A caller over HTTP gets
+// a fixed message for an internal error.
+export function toRpcError(error: unknown, auth: Auth): RpcError {
+  const e = error instanceof DurabaseError ? error.toJSON() : { code: ErrorCode.InternalError, message: error instanceof Error ? error.message : String(error) };
+  return auth.role === "service" ? e : callerError(e);
 }
 
 class BatchFailure {
@@ -85,12 +87,12 @@ export function handle(ctx: Context, body: unknown): RpcResponse | RpcResponse[]
 
   const env = envelope(body);
   if (!env.ok) return response(env.id, { error: env.error });
-  if (ctx.migrationError) return answer(env, { error: ctx.migrationError.toJSON() });
+  if (ctx.migrationError) return answer(env, { error: toRpcError(ctx.migrationError, ctx.auth) });
   try {
     const result = ctx.storage.transactionSync(() => dispatch(ctx, env.call));
     return answer(env, { result });
   } catch (error) {
-    return answer(env, { error: toRpcError(error) });
+    return answer(env, { error: toRpcError(error, ctx.auth) });
   }
 }
 
@@ -109,7 +111,7 @@ function handleBatch(ctx: Context, body: unknown[]): RpcResponse | RpcResponse[]
   if (invalid >= 0) {
     outcomes = envs.map((e, i) => (!e.ok ? { error: e.error } : rolledBack(invalid)));
   } else if (ctx.migrationError) {
-    outcomes = envs.map(() => ({ error: ctx.migrationError!.toJSON() }));
+    outcomes = envs.map(() => ({ error: toRpcError(ctx.migrationError, ctx.auth) }));
   } else {
     try {
       const results = ctx.storage.transactionSync(() =>
@@ -117,13 +119,13 @@ function handleBatch(ctx: Context, body: unknown[]): RpcResponse | RpcResponse[]
           try {
             return dispatch(ctx, (e as Extract<Envelope, { ok: true }>).call);
           } catch (error) {
-            throw new BatchFailure(i, toRpcError(error));
+            throw new BatchFailure(i, toRpcError(error, ctx.auth));
           }
         }),
       );
       outcomes = results.map((result) => ({ result }));
     } catch (error) {
-      const failure = error instanceof BatchFailure ? error : new BatchFailure(0, toRpcError(error));
+      const failure = error instanceof BatchFailure ? error : new BatchFailure(0, toRpcError(error, ctx.auth));
       outcomes = envs.map((_, i) => (i === failure.index ? { error: failure.error } : rolledBack(failure.index)));
     }
   }
@@ -171,7 +173,11 @@ function dispatch(ctx: Context, call: Call): unknown {
   } catch (error) {
     if (error instanceof DurabaseError) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    throw new DurabaseError(ErrorCode.FunctionError, message, { function: name });
+    if (ctx.auth.role === "service") throw new DurabaseError(ErrorCode.FunctionError, message, { function: name });
+    // The message of another error can name code of the app. A function
+    // throws a DurabaseError to give a message to a caller over HTTP.
+    console.error(`durabase: the function ${name} failed:`, error);
+    throw new DurabaseError(ErrorCode.FunctionError, `the function ${name} failed`, { function: name });
   }
   if (typeof (result as { then?: unknown } | null)?.then === "function") {
     throw new DurabaseError(

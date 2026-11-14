@@ -24,6 +24,7 @@ db://*/tags:
   select: { $auth.email: { like: "%@staff.example" } }
   insert: { owner: { eq: $auth.email } }
   update: { owner: { eq: $auth.email } }
+  delete: { owner: { eq: $auth.email } }
 
 files://media/avatars/*:
   select: true

@@ -16,8 +16,11 @@ export const Files = files({
   policies,
 });
 
+// The databases that the tests call over HTTP.
+const DATABASES = ["http", "session", "client-test"];
+
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
-    return (await serve(request, env)) ?? new Response("not found", { status: 404 });
+    return (await serve(request, env, { databases: DATABASES })) ?? new Response("not found", { status: 404 });
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

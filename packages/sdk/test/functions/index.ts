@@ -44,3 +44,8 @@ export const notAFunction = 42;
 
 // Returns the caller. Callers over HTTP can call it.
 export const whoami = fn.public((tx) => tx.auth);
+
+// Throws an error that is not a DurabaseError. Callers over HTTP can call it.
+export const public_fail = fn.public(() => {
+  throw new Error("secret detail");
+});

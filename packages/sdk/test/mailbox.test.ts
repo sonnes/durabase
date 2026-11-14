@@ -198,6 +198,36 @@ describe("the alarm", () => {
     expect(await row(mail, data!.id)).toMatchObject({ folder: "failed", attempts: 12, due_at: null, error: "E_RATE_LIMIT_EXCEEDED" });
   });
 
+  it("refuses a line break in the subject, in a name and in a header", async () => {
+    const { mail } = freshMailbox();
+    const base = { to: "asha@example.com", subject: "Hi", text: "Hi" };
+    const bad = [
+      { ...base, subject: "Hi\r\nBcc: eve@evil.example" },
+      { ...base, subject: "Hi\nBcc: eve@evil.example" },
+      { ...base, fromName: "Shop\r\nBcc: eve@evil.example" },
+      { ...base, to: { email: "asha@example.com", name: "Asha\nBcc: eve@evil.example" } },
+      { ...base, headers: { "X-Campaign": "a\r\nBcc: eve@evil.example" } },
+    ];
+    for (const input of bad) {
+      const { error } = await mail.rpc("send", input);
+      expect(error).toMatchObject({ code: -32602, message: expect.stringContaining("line break") });
+    }
+    const { data } = await mail.from("messages").select("id");
+    expect(data).toEqual([]);
+  });
+
+  it("takes the line breaks out of the subject of a reply", async () => {
+    const { address, mail } = freshMailbox();
+    const raw = rawEmail({ from: "asha@example.com", to: address, subject: "=?utf-8?B?SGkNCkJjYzogZXZlQGV2aWwuZXhhbXBsZQ==?=", messageId: "<in-8@mail.example>" });
+    await receiveEmail(inbound(raw, address), env.MAILBOX, { addresses: [address] });
+    const { data: inbox } = await mail.from("messages").select("id").eq("folder", "inbox");
+
+    const { data, error } = await mail.rpc("reply", { id: inbox![0].id, text: "Hello" });
+    expect(error).toBeNull();
+    expect((await row(mail, data!.id)).subject).toBe("Re: Hi Bcc: eve@evil.example");
+    expect((await mail.rpc("reply", { id: inbox![0].id, text: "Hello", fromName: "Shop\nBcc: x@evil.example" })).error).toMatchObject({ code: -32602 });
+  });
+
   it("sends the list headers of a message", async () => {
     const { mail, stub } = freshMailbox();
     const headers = {
@@ -270,6 +300,16 @@ describe("receiveEmail", () => {
     expect(files).toEqual([{ filename: "box.png", type: "image/png", size: 9, key: `${address}/${m.id}/1` }]);
     expect(await (await env.MAILBOX_FILES.get(files[0].key))!.text()).toBe("png bytes");
     expect(await (await env.MAILBOX_FILES.get(m.raw_key!))!.text()).toBe(raw);
+  });
+
+  it("keeps the address of the SMTP envelope next to the address of the From header", async () => {
+    const { address, mail } = freshMailbox();
+    const raw = rawEmail({ from: "asha@example.com", to: address, subject: "Hi", messageId: "<in-9@mail.example>" });
+
+    await receiveEmail(inbound(raw, address, "Bounce@Mailer.Example"), env.MAILBOX, { addresses: [address] });
+
+    const { data } = await mail.from("messages").select("from_address", "envelope_from").eq("folder", "inbox");
+    expect(data).toEqual([{ from_address: "asha@example.com", envelope_from: "bounce@mailer.example" }]);
   });
 
   it("rejects mail to an address with no mailbox", async () => {

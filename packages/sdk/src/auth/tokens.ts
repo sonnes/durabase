@@ -2,20 +2,26 @@
 // DURABASE_AUTH_SECRET. Each value has its own prefix, so a signature of one
 // kind is never valid as another kind.
 //
-//   access token   an HS256 JWT, for 1 hour
+//   access token   an HS256 JWT, for 5 minutes
 //   refresh token  r1.<session id>.<counter>.<signature>, as in Supabase
 //   code hash      HMAC of the email and the 6-digit code
-//   link hash      SHA-256 of the random link token
+//   link hash      SHA-256 of the random link token and the nonce of the browser
 
 import type { Auth } from "../caller";
 
-export const ACCESS_SECONDS = 60 * 60;
+// The Worker accepts an access token with no call to the Auth DO, so a
+// sign-out stops the access token only when it expires.
+export const ACCESS_SECONDS = 5 * 60;
 export const REFRESH_SECONDS = 30 * 24 * 60 * 60;
+
+// The least length of a secret. A shorter secret is open to a search.
+export const MIN_SECRET = 32;
 
 const encoder = new TextEncoder();
 const keys = new Map<string, Promise<CryptoKey>>();
 
 function key(secret: string): Promise<CryptoKey> {
+  if (secret.length < MIN_SECRET) throw new Error(`the secret must have ${MIN_SECRET} characters or more`);
   let k = keys.get(secret);
   if (!k) {
     k = crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
@@ -47,8 +53,9 @@ async function sign(secret: string, data: string): Promise<string> {
 }
 
 async function verify(secret: string, data: string, signature: string): Promise<boolean> {
+  const k = await key(secret);
   try {
-    return await crypto.subtle.verify("HMAC", await key(secret), fromBase64url(signature), encoder.encode(data));
+    return await crypto.subtle.verify("HMAC", k, fromBase64url(signature), encoder.encode(data));
   } catch {
     return false;
   }
@@ -67,8 +74,9 @@ export function randomCode(): string {
   }
 }
 
-export async function linkHash(token: string): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", encoder.encode(`link.${token}`)));
+// nonce is the value of the sign-in cookie of the browser (session.ts).
+export async function linkHash(token: string, nonce: string): Promise<string> {
+  return hex(await crypto.subtle.digest("SHA-256", encoder.encode(`link.${token}.${nonce}`)));
 }
 
 export async function codeHash(secret: string, email: string, code: string): Promise<string> {
@@ -150,7 +158,7 @@ export async function verifyFile(secret: string, path: string, exp: number, sign
 
 // The signature of a value that an app puts in a link, such as the email of a
 // confirm link. The app gives each kind of value its own prefix, such as
-// "confirm:".
+// "confirm:". The secret must have 32 characters or more.
 export async function signValue(secret: string, value: string): Promise<string> {
   return sign(secret, `value.${value}`);
 }

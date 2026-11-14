@@ -89,6 +89,24 @@ export type Tables = {
       sessions: "many";
     };
   };
+  wrong_codes: {
+    row: {
+      email: string;
+      since: number;
+      count: number;
+    };
+    insert: {
+      email: string;
+      since: number;
+      count: number;
+    };
+    update: {
+      email?: string;
+      since?: number;
+      count?: number;
+    };
+    relationships: Record<never, never>;
+  };
 };
 
 export type Database = {
@@ -106,6 +124,13 @@ export const migrations: Migration[] = [
       "CREATE TABLE \"sessions\" (\n  \"id\" text primary key,\n  \"user_id\" text not null references \"users\" (\"id\") on delete cascade,\n  \"counter\" integer not null default 0,\n  \"refreshed_at\" integer not null,\n  \"not_after\" integer not null,\n  \"revoked_at\" integer,\n  \"created_at\" integer not null\n)",
       "CREATE INDEX \"codes_email\" on \"codes\" (\"email\", \"created_at\")",
       "CREATE INDEX \"sessions_user\" on \"sessions\" (\"user_id\")",
+    ],
+  },
+  {
+    version: 2,
+    name: "wrong_codes",
+    statements: [
+      "CREATE TABLE \"wrong_codes\" (\n  \"email\" text primary key,\n  \"since\" integer not null,\n  \"count\" integer not null\n)",
     ],
   },
 ];

@@ -7,11 +7,25 @@
 
 import { ANON, type Auth } from "../caller";
 import type { AuthDO } from "./auth";
-import type { User } from "./functions";
+import { CODE_MINUTES, type User } from "./functions";
 import { ACCESS_SECONDS, REFRESH_SECONDS, signAccess, signRefresh, verifyAccess, verifyRefresh } from "./tokens";
 
 export const ACCESS_COOKIE = "__Host-durabase-access";
 export const REFRESH_COOKIE = "__Host-durabase-refresh";
+
+// The nonce of a sign-in. It stops login CSRF through the link of the email:
+// an attacker asks for a link to the account of the attacker, and makes the
+// browser of another person open it. That person then works in the account of
+// the attacker.
+//
+// signInWithOtp gives the browser a random nonce in this cookie. The Auth DO
+// keeps the hash of the link token and the nonce together (linkHash), so the
+// callback accepts a link only with the cookie of the browser that asked for
+// it. Script cannot read the cookie, and the __Host- prefix stops a write
+// from a subdomain. The 6-digit code has no nonce: a person types it into the
+// page that asked for it, also on another device.
+export const SIGNIN_COOKIE = "__Host-durabase-signin";
+const NONCE = /^[A-Za-z0-9_-]{43}$/;
 
 export interface Session {
   auth: Auth;
@@ -23,6 +37,20 @@ export interface Session {
 
 function cookie(name: string, value: string, maxAge: number): string {
   return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+export function signInCookie(nonce: string): string {
+  return cookie(SIGNIN_COOKIE, nonce, CODE_MINUTES * 60);
+}
+
+export function clearSignInCookie(): string {
+  return cookie(SIGNIN_COOKIE, "", 0);
+}
+
+// The nonce of the browser, or undefined if the browser has none.
+export function readNonce(request: Request): string | undefined {
+  const nonce = readCookies(request).get(SIGNIN_COOKIE);
+  return nonce !== undefined && NONCE.test(nonce) ? nonce : undefined;
 }
 
 export function clearCookies(): string[] {

@@ -18,6 +18,8 @@ export interface FilesBindings {
 export interface FilesEnv {
   files: DurableObjectStub<FilesDO>;
   bucket: R2Bucket;
+  // The binding of the Files DO.
+  binding: string;
 }
 
 export function filesEnv(env: unknown, bindings: FilesBindings = {}): FilesEnv {
@@ -26,7 +28,24 @@ export function filesEnv(env: unknown, bindings: FilesBindings = {}): FilesEnv {
   const bucket = e[bindings.filesBucket ?? "FILES_BUCKET"] as R2Bucket | undefined;
   if (!ns) throw new Error(`the Worker has no binding ${bindings.files ?? "FILES"}`);
   if (!bucket) throw new Error(`the Worker has no binding ${bindings.filesBucket ?? "FILES_BUCKET"}`);
-  return { files: ns.get(ns.idFromName(FILES_DO)), bucket };
+  return { files: ns.get(ns.idFromName(FILES_DO)), bucket, binding: bindings.files ?? "FILES" };
+}
+
+// The public flag of each bucket, by binding and bucket. The flag is in the
+// code of the Files DO, so it changes only with a deploy, and a deploy starts
+// new isolates. One isolate asks the DO one time for each bucket.
+const publicBuckets = new Map<string, boolean>();
+
+// True if a download from the bucket needs no policy now. The mark of an
+// object in R2 tells only how the bucket was at the time of the upload.
+export async function isPublic(fe: FilesEnv, bucket: string): Promise<boolean> {
+  const key = `${fe.binding}/${bucket}`;
+  let known = publicBuckets.get(key);
+  if (known === undefined) {
+    known = await fe.files.isPublic(bucket);
+    publicBuckets.set(key, known);
+  }
+  return known;
 }
 
 // The R2 key of one version of a file.

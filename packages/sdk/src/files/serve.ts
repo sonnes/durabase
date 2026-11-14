@@ -1,6 +1,6 @@
 // The routes of files://<bucket>/<name>:
 //
-//   GET  /files/<bucket>/<name>?v=<version>             a public file: no DO call
+//   GET  /files/<bucket>/<name>?v=<version>             a file of a public bucket: no policy
 //   GET  /files/<bucket>/<name>?v=…&exp=…&sig=…         a signed link: no DO call
 //   GET  /files/<bucket>/<name>                         the current version, with the select rule
 //   PUT  /files/<bucket>/<name>                         an upload. The header x-upsert: true overwrites.
@@ -10,9 +10,10 @@
 
 import type { Session } from "../auth/session";
 import { verifyFile } from "../auth/tokens";
-import { ErrorCode, type Id, type RpcError } from "../protocol";
+import { readJson } from "../body";
+import { callerError, ErrorCode, type Id, type RpcError } from "../protocol";
 import type { Address } from "../uri";
-import { filesEnv, head, list, r2Key, remove, upload, type FilesBindings, type FilesEnv } from "./ops";
+import { filesEnv, head, isPublic, list, r2Key, remove, upload, type FilesBindings, type FilesEnv } from "./ops";
 
 // A file can hold HTML or SVG from a user. These headers stop it from
 // running script on the site.
@@ -28,6 +29,7 @@ export async function serveFiles(
   bindings: FilesBindings,
   secret: string | undefined,
   session: () => Promise<Session>,
+  maxBody: number,
 ): Promise<Response> {
   const fe = filesEnv(env, bindings);
   const bucket = route.authority;
@@ -35,7 +37,7 @@ export async function serveFiles(
 
   if (name === "") {
     if (request.method !== "POST") return json({ jsonrpc: "2.0", id: null, error: { code: ErrorCode.InvalidRequest, message: "use POST with a JSON-RPC 2.0 body" } }, 405);
-    return rpc(request, fe, bucket, session);
+    return rpc(request, fe, bucket, session, maxBody);
   }
   if (request.method === "GET" || request.method === "HEAD") return download(request, fe, bucket, name, secret, session);
   if (request.method === "PUT") return put(request, fe, bucket, name, session);
@@ -60,19 +62,22 @@ async function download(
     if (!valid) return new Response("the link is not valid or expired", { status: 403 });
     return respond(request, await fe.bucket.get(r2Key(bucket, name, version)), "private, max-age=60");
   }
-  if (version) {
+  const open = await isPublic(fe, bucket);
+  if (version && open) {
     const object = await fe.bucket.get(r2Key(bucket, name, version));
     // A public file of one version never changes.
-    if (object?.customMetadata?.public === "1") return respond(request, object, "public, max-age=31536000, immutable");
+    if (object) return respond(request, object, "public, max-age=31536000, immutable");
   }
 
   const s = await session();
   const row = await head(fe, s.auth, { bucket, name });
-  if (!row.ok) return new Response(row.error.message, { status: 400 });
+  if (!row.ok) return new Response(callerError(row.error).message, { status: 400 });
   if (!row.value || (version && version !== row.value.version)) return withCookies(new Response("not found", { status: 404 }), s.cookies);
   const object = await fe.bucket.get(r2Key(bucket, name, row.value.version));
-  const isPublic = object?.customMetadata?.public === "1";
-  return withCookies(respond(request, object, isPublic ? "public, max-age=60" : "private, no-store"), s.cookies);
+  // A shared cache keeps a public answer for each visitor. An answer with the
+  // new cookies of a session is for one browser only.
+  const shared = open && s.cookies.length === 0;
+  return withCookies(respond(request, object, shared ? "public, max-age=60" : "private, no-store"), s.cookies);
 }
 
 function respond(request: Request, object: R2ObjectBody | null, cache: string): Response {
@@ -99,22 +104,19 @@ async function put(request: Request, fe: FilesEnv, bucket: string, name: string,
     type: request.headers.get("content-type")?.split(";")[0].trim() || "application/octet-stream",
     upsert: request.headers.get("x-upsert") === "true",
   });
-  const res = r.ok ? json({ jsonrpc: "2.0", id: null, result: r.value }) : json({ jsonrpc: "2.0", id: null, error: r.error }, status(r.error));
+  const res = r.ok ? json({ jsonrpc: "2.0", id: null, result: r.value }) : json({ jsonrpc: "2.0", id: null, error: callerError(r.error) }, status(r.error));
   return withCookies(res, s.cookies);
 }
 
-async function rpc(request: Request, fe: FilesEnv, bucket: string, session: () => Promise<Session>): Promise<Response> {
-  let body: { id?: Id; method?: string; params?: Record<string, unknown> };
-  try {
-    body = await request.json();
-  } catch {
-    return json({ jsonrpc: "2.0", id: null, error: { code: ErrorCode.ParseError, message: "the body is not JSON" } });
-  }
+async function rpc(request: Request, fe: FilesEnv, bucket: string, session: () => Promise<Session>, maxBody: number): Promise<Response> {
+  const read = await readJson(request, maxBody);
+  if (!read.ok) return json({ jsonrpc: "2.0", id: null, error: read.error }, read.status);
+  const body = read.value as { id?: Id; method?: string; params?: Record<string, unknown> } | null;
   const id = body?.id ?? null;
   const params = body?.params ?? {};
   const s = await session();
   const answer = (r: { ok: true; value: unknown } | { ok: false; error: RpcError }) =>
-    withCookies(json(r.ok ? { jsonrpc: "2.0", id, result: r.value } : { jsonrpc: "2.0", id, error: r.error }), s.cookies);
+    withCookies(json(r.ok ? { jsonrpc: "2.0", id, result: r.value } : { jsonrpc: "2.0", id, error: callerError(r.error) }), s.cookies);
 
   switch (body?.method) {
     case "list":

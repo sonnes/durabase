@@ -57,7 +57,7 @@ async function signIn(email: string): Promise<string> {
 }
 
 async function whoami(cookie: string, origin = ORIGIN) {
-  const res = await SELF.fetch(`${ORIGIN}/db/${crypto.randomUUID()}`, {
+  const res = await SELF.fetch(`${ORIGIN}/db/session`, {
     method: "POST",
     headers: { cookie, origin },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "fn.whoami" }),
@@ -114,6 +114,36 @@ describe("sign-in with a code", () => {
     expect(sixth.body.error).toMatchObject({ code: -32005, data: { reason: "rate-limit" } });
   });
 
+  it("still accepts a sent code after the address has its 5 emails", async () => {
+    const email = freshEmail();
+    for (let i = 0; i < 5; i++) await authCall("signInWithOtp", { email });
+    const { code } = await lastEmail(email);
+    expect((await authCall("signInWithOtp", { email })).body.error).toMatchObject({ data: { reason: "rate-limit" } });
+    expect((await authCall("verifyOtp", { email, code })).body.result.user).toMatchObject({ email });
+  });
+
+  it("locks the codes of an address after 20 wrong codes in one day", async () => {
+    const email = freshEmail();
+    for (let round = 0; round < 4; round++) {
+      await authCall("signInWithOtp", { email });
+      const { code } = await lastEmail(email);
+      const wrong = code === "000000" ? "111111" : "000000";
+      for (let i = 0; i < 5; i++) {
+        const { body } = await authCall("verifyOtp", { email, code: wrong });
+        expect(body.error).toMatchObject({ data: { reason: "invalid" } });
+      }
+    }
+    const start = await authCall("signInWithOtp", { email });
+    const { link, code } = await lastEmail(email);
+    const { body } = await authCall("verifyOtp", { email, code });
+    expect(body.error).toMatchObject({ code: -32005, data: { reason: "locked" } });
+
+    // The link of the email still signs in.
+    const url = new URL(link);
+    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual", headers: { cookie: cookieHeader(start.res) } });
+    expect((await whoami(cookieHeader(res))).auth).toMatchObject({ role: "authenticated", email });
+  });
+
   it("refuses a sign-in from a page of another site", async () => {
     const { res } = await authCall("signInWithOtp", { email: freshEmail() }, { origin: "https://evil.example" });
     expect(res.status).toBe(403);
@@ -123,16 +153,17 @@ describe("sign-in with a code", () => {
 describe("sign-in with the link", () => {
   it("sets the cookies and goes to the next path", async () => {
     const email = freshEmail();
-    await authCall("signInWithOtp", { email, next: "/orders" });
+    const start = await authCall("signInWithOtp", { email, next: "/orders" });
+    const browser = { cookie: cookieHeader(start.res) };
     const { link } = await lastEmail(email);
     const url = new URL(link);
     expect(url.searchParams.get("next")).toBe("/orders");
-    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual" });
+    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual", headers: browser });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/orders");
     expect((await whoami(cookieHeader(res))).auth).toMatchObject({ role: "authenticated", email });
 
-    const again = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual" });
+    const again = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual", headers: browser });
     expect(again.headers.get("location")).toBe("/orders?auth_error=invalid");
     expect(again.headers.getSetCookie()).toEqual([]);
   });
@@ -144,9 +175,60 @@ describe("sign-in with the link", () => {
     expect(new URL(link).searchParams.has("next")).toBe(false);
   });
 
+  it("leaves a next path with a control character out of the link", async () => {
+    const email = freshEmail();
+    await authCall("signInWithOtp", { email, next: "/\t/evil.example" });
+    const { link } = await lastEmail(email);
+    expect(new URL(link).searchParams.has("next")).toBe(false);
+  });
+
   it("goes only to a path on this site", async () => {
-    const res = await SELF.fetch(`${ORIGIN}/auth/main/callback?token=x&next=//evil.example`, { redirect: "manual" });
-    expect(res.headers.get("location")).toBe("/?auth_error=invalid");
+    for (const next of ["//evil.example", "/%09/evil.example", "/%0A/evil.example", "/%5Cevil.example", "https://evil.example/"]) {
+      const res = await SELF.fetch(`${ORIGIN}/auth/main/callback?token=x&next=${next}`, { redirect: "manual" });
+      expect(res.headers.get("location")).toBe("/?auth_error=browser");
+    }
+  });
+
+  it("keeps the query and the hash of the next path", async () => {
+    const res = await SELF.fetch(`${ORIGIN}/auth/main/callback?token=x&next=${encodeURIComponent("/orders?tab=open#top")}`, { redirect: "manual" });
+    expect(res.headers.get("location")).toBe("/orders?tab=open&auth_error=browser#top");
+  });
+
+  it("signs in only the browser that asked for the link", async () => {
+    const email = freshEmail();
+    const start = await authCall("signInWithOtp", { email });
+    const signIn = start.res.headers.getSetCookie();
+    expect(signIn).toHaveLength(1);
+    expect(signIn[0]).toMatch(/^__Host-durabase-signin=[\w-]{43}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+    const { link } = await lastEmail(email);
+    const url = new URL(link);
+    const open = (cookie?: string) =>
+      SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual", headers: cookie ? { cookie } : {} });
+
+    // The browser of an attacker's victim has no cookie, or the cookie of another sign-in.
+    const none = await open();
+    expect(none.headers.get("location")).toBe("/?auth_error=browser");
+    expect(none.headers.getSetCookie()).toEqual([]);
+    const other = await authCall("signInWithOtp", { email: freshEmail() });
+    const wrong = await open(cookieHeader(other.res));
+    expect(wrong.headers.get("location")).toBe("/?auth_error=invalid");
+    expect(wrong.headers.getSetCookie()).toEqual([]);
+
+    const res = await open(cookieHeader(start.res));
+    expect(res.headers.get("location")).toBe("/");
+    expect((await whoami(cookieHeader(res))).auth).toMatchObject({ role: "authenticated", email });
+  });
+
+  it("keeps the cookie of the browser for a second email", async () => {
+    const email = freshEmail();
+    const first = await authCall("signInWithOtp", { email });
+    const cookie = cookieHeader(first.res);
+    const { link } = await lastEmail(email);
+    const second = await authCall("signInWithOtp", { email }, { cookie });
+    expect(cookieHeader(second.res)).toBe(cookie);
+    const url = new URL(link);
+    const res = await SELF.fetch(`${ORIGIN}${url.pathname}${url.search}`, { redirect: "manual", headers: { cookie } });
+    expect(res.headers.get("location")).toBe("/");
   });
 });
 
@@ -159,7 +241,7 @@ describe("the session", () => {
 
   it("accepts the access token in a Bearer header", async () => {
     const token = await signAccess(SECRET, { id: "u1", email: "a@example.com", groups: ["staff"] }, "s1");
-    const res = await SELF.fetch(`${ORIGIN}/db/${crypto.randomUUID()}`, {
+    const res = await SELF.fetch(`${ORIGIN}/db/session`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "fn.whoami" }),
@@ -205,6 +287,30 @@ describe("the session", () => {
     // Two steps old: a copy of the token. The session ends for each token.
     expect((await whoami(stolen)).auth).toEqual({ role: "anon" });
     expect((await whoami(latest)).auth).toEqual({ role: "anon" });
+  });
+
+  it("keeps the access token for 5 minutes", async () => {
+    const token = await signAccess(SECRET, { id: "u1", email: "a@example.com", groups: [] }, "s1");
+    const claims = JSON.parse(atob(token.split(".")[1].replaceAll("-", "+").replaceAll("_", "/"))) as { iat: number; exp: number };
+    expect(claims.exp - claims.iat).toBe(300);
+
+    const email = freshEmail();
+    await authCall("signInWithOtp", { email });
+    const { code } = await lastEmail(email);
+    const { res } = await authCall("verifyOtp", { email, code });
+    expect(res.headers.getSetCookie().find((c) => c.startsWith("__Host-durabase-access="))).toMatch(/Max-Age=300$/);
+  });
+
+  it("sends no cookie with a response that a shared cache can keep", async () => {
+    const cookie = await signIn(freshEmail());
+    const refreshOnly = cookie.split("; ").filter((c) => c.startsWith("__Host-durabase-refresh="))[0];
+    const name = `avatars/${crypto.randomUUID().slice(0, 8)}.txt`;
+    await createClient("files://media", { env }).upload(name, "public", { contentType: "text/plain" });
+
+    const res = await SELF.fetch(`${ORIGIN}/files/media/${name}`, { headers: { cookie: refreshOnly } });
+    expect(await res.text()).toBe("public");
+    expect(res.headers.getSetCookie()).toHaveLength(2);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("signs a standard HS256 JWT", async () => {

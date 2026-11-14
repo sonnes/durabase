@@ -147,6 +147,7 @@ export const policies: Policy[] = [
   { uri: "db://*/orders", action: "select", rule: "{\"customer_email\":{\"eq\":\"$auth.email\"}}" },
   { uri: "db://*/orders", action: "update", rule: "{\"customer_email\":{\"eq\":\"$auth.email\"}}" },
   { uri: "db://*/orders#customer", action: "select", rule: "false" },
+  { uri: "db://*/tags", action: "delete", rule: "{\"owner\":{\"eq\":\"$auth.email\"}}" },
   { uri: "db://*/tags", action: "insert", rule: "{\"owner\":{\"eq\":\"$auth.email\"}}" },
   { uri: "db://*/tags", action: "select", rule: "{\"$auth.email\":{\"like\":\"%@staff.example\"}}" },
   { uri: "db://*/tags", action: "update", rule: "{\"owner\":{\"eq\":\"$auth.email\"}}" },

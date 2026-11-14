@@ -78,9 +78,11 @@ export function auth(options: AuthOptions) {
     // Sends one email with a link and a 6-digit code. An error comes back as
     // a value, because Workers RPC drops the code of a thrown error.
     // next is the path after sign-in, such as "/orders". serve() checks it.
-    async signIn(email: string, origin: string, next?: string): Promise<{ error?: RpcError }> {
+    // nonce is the sign-in cookie of the browser. The link works only with
+    // the same nonce.
+    async signIn(email: string, origin: string, next: string | undefined, nonce: string): Promise<{ error?: RpcError }> {
       try {
-        await this.#signIn(email, origin, next);
+        await this.#signIn(email, origin, next, nonce);
         return {};
       } catch (error) {
         if (error instanceof DurabaseError) return { error: error.toJSON() };
@@ -88,13 +90,13 @@ export function auth(options: AuthOptions) {
       }
     }
 
-    async #signIn(email: string, origin: string, next: string | undefined): Promise<void> {
+    async #signIn(email: string, origin: string, next: string | undefined, nonce: string): Promise<void> {
       const address = normalEmail(email);
       const token = randomToken();
       const code = randomCode();
       await this.call("start", {
         email: address,
-        link_hash: await linkHash(token),
+        link_hash: await linkHash(token, nonce),
         code_hash: await codeHash(this.secret(), address, code),
       });
 
@@ -119,8 +121,8 @@ export function auth(options: AuthOptions) {
       return (await this.call("verify", { email: address, code_hash: await codeHash(this.secret(), address, code.replace(/\s/g, "")) })) as Verified;
     }
 
-    async verifyLink(token: string): Promise<Verified> {
-      return (await this.call("verify", { link_hash: await linkHash(token) })) as Verified;
+    async verifyLink(token: string, nonce: string): Promise<Verified> {
+      return (await this.call("verify", { link_hash: await linkHash(token, nonce) })) as Verified;
     }
 
     async refresh(sid: string, counter: number): Promise<Refreshed> {

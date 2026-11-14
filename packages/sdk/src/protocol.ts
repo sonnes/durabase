@@ -15,6 +15,8 @@ export const ErrorCode = {
   RowCount: -32004,
   // A policy refused the call.
   Forbidden: -32005,
+  // The caller sent too many requests.
+  RateLimited: -32006,
   InternalError: -32603,
 } as const;
 
@@ -41,6 +43,23 @@ export class DurabaseError extends Error implements RpcError {
       ? { code: this.code, message: this.message }
       : { code: this.code, message: this.message, data: this.data };
   }
+}
+
+// The message of these errors comes from SQLite or from an exception, so it
+// can name tables, columns and code of the app.
+const INTERNAL: Record<number, string> = {
+  [ErrorCode.InternalError]: "internal error",
+  [ErrorCode.SqlError]: "the database refused the statement",
+  [ErrorCode.MigrationFailed]: "a migration failed",
+};
+
+// The error for a caller over HTTP. An internal error gets a fixed message,
+// and its real message goes to the log of the Worker.
+export function callerError(error: RpcError): RpcError {
+  const message = INTERNAL[error.code];
+  if (message === undefined) return error;
+  console.error(`durabase: error ${error.code}:`, error.message);
+  return { code: error.code, message };
 }
 
 export const Op = z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "in", "is", "like"]);

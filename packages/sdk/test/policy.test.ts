@@ -141,12 +141,53 @@ describe("writes", () => {
 
   it("checks the rows of a table with no rowid", async () => {
     const { call } = await shop();
-    const ok = await call(asha, "insert", { table: "tags", rows: [{ name: "blue", owner: "asha@example.com" }] });
+    const ok = await call(staff, "insert", { table: "tags", rows: [{ name: "blue", owner: "kiran@staff.example" }] });
     expect(ok.result).toEqual({ count: 1 });
-    const bad = await call(asha, "insert", { table: "tags", rows: [{ name: "green", owner: "ravi@example.com" }] });
+    const bad = await call(staff, "insert", { table: "tags", rows: [{ name: "green", owner: "ravi@example.com" }] });
     expect(bad.error).toMatchObject({ code: -32005 });
-    const moved = await call(asha, "update", { table: "tags", set: { owner: "ravi@example.com" }, where: { name: { eq: "blue" } } });
+    const moved = await call(staff, "update", { table: "tags", set: { owner: "ravi@example.com" }, where: { name: { eq: "blue" } } });
     expect(moved.error).toMatchObject({ code: -32005 });
+  });
+
+  // asha owns a tag, so the update rule and the delete rule accept her. The
+  // select rule accepts only staff.
+  it("does not update or delete a row that the caller cannot select", async () => {
+    const { call, service } = await shop();
+    await service.from("tags").insert({ name: "green", owner: "asha@example.com" });
+    const tag = { table: "tags", where: { name: { like: "g%" } }, returning: ["name"] };
+
+    const update = await call(asha, "update", { ...tag, set: { owner: "asha@example.com" } });
+    expect(update.result).toEqual({ rows: [], count: 0 });
+    const remove = await call(asha, "delete", tag);
+    expect(remove.result).toEqual({ rows: [], count: 0 });
+    expect((await call(asha, "delete", { table: "tags", where: { name: { eq: "green" } } })).result).toEqual({ count: 0 });
+    expect((await service.from("tags").select("name").eq("name", "green")).data).toEqual([{ name: "green" }]);
+  });
+
+  it("updates and deletes a row that the caller can select", async () => {
+    const { call } = await shop();
+    const update = await call(staff, "update", { table: "tags", set: { owner: "kiran@staff.example" }, where: { name: { eq: "red" } }, returning: ["name"] });
+    expect(update.result).toEqual({ rows: [{ name: "red" }], count: 1 });
+    const remove = await call(staff, "delete", { table: "tags", where: { name: { eq: "red" } }, returning: ["name"] });
+    expect(remove.result).toEqual({ rows: [{ name: "red" }], count: 1 });
+  });
+
+  it("gives a caller with a policy 1000 rows of a select at most", async () => {
+    const { call, service } = await shop();
+    await service.from("counters").insert(Array.from({ length: 1001 }, (_, i) => ({ name: `n-${i}`, value: i })));
+    expect((await call(staff, "select", { table: "counters", columns: ["name"] })).result?.count).toBe(1000);
+    expect((await call(staff, "select", { table: "counters", columns: ["name"], limit: 5000 })).result?.count).toBe(1000);
+    expect((await call(staff, "select", { table: "counters", columns: ["name"], limit: 5 })).result?.count).toBe(5);
+    expect((await service.from("counters").select("name")).data).toHaveLength(1003);
+  });
+
+  it("hides the message of SQLite from a caller with a policy", async () => {
+    const { call, service } = await shop();
+    const again = { table: "tags", rows: [{ name: "red", owner: "kiran@staff.example" }] };
+    const r = await call(staff, "insert", again);
+    expect(r.error).toEqual({ code: -32002, message: "the database refused the statement" });
+    const { error } = await service.from("tags").insert(again.rows);
+    expect(error).toMatchObject({ code: -32002, message: expect.stringContaining("UNIQUE constraint failed") });
   });
 
   it("refuses a write with no policy", async () => {

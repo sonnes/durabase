@@ -17,6 +17,9 @@ const DAY = 24 * HOUR;
 export const CODE_MINUTES = 10;
 export const CODES_PER_HOUR = 5;
 export const TRIES_PER_CODE = 5;
+// One code has 1,000,000 values. With this limit, a search for the code of
+// an address gets 20 tries in 24 hours.
+export const WRONG_CODES_PER_DAY = 20;
 export const SESSION_DAYS = 30;
 // A refresh token one step old still works for this time. Two tabs can
 // refresh at the same time, or a response can get lost.
@@ -28,7 +31,7 @@ export interface User {
   groups: string[];
 }
 
-export type Verified = { ok: true; user: User; sid: string; counter: number } | { ok: false; reason: "invalid" | "expired" | "tries" };
+export type Verified = { ok: true; user: User; sid: string; counter: number } | { ok: false; reason: "invalid" | "expired" | "tries" | "locked" };
 export type Refreshed = { ok: true; user: User; sid: string; counter: number } | { ok: false };
 
 function parse<T extends z.ZodTypeAny>(schema: T, args: unknown): z.output<T> {
@@ -43,10 +46,12 @@ function toUser(row: { id: string; email: string; groups: string }): User {
 
 const StartInput = z.object({ email: z.string().email(), link_hash: z.string(), code_hash: z.string() });
 
-// Opens a sign-in. Refuses after 5 emails in 1 hour for one address.
+// Opens a sign-in. Refuses after 5 emails in 1 hour for one address. The
+// codes that the address has stay open.
 export const start = fn((tx, args: z.input<typeof StartInput>) => {
   const a = parse(StartInput, args);
   tx.sql("DELETE FROM codes WHERE expires_at < ?", tx.now - HOUR);
+  tx.sql("DELETE FROM wrong_codes WHERE since <= ?", tx.now - DAY);
   const [{ n }] = tx.sql<{ n: number }>("SELECT count(*) AS n FROM codes WHERE email = ? AND created_at > ?", a.email, tx.now - HOUR);
   if (n >= CODES_PER_HOUR) {
     throw new DurabaseError(ErrorCode.Forbidden, "too many sign-in emails. Try again in 1 hour.", { reason: "rate-limit" });
@@ -70,6 +75,9 @@ const VerifyInput = z.union([
 
 // Accepts a link or a code. On success, it removes the open codes of the
 // email, makes the user row if it is new, and opens a session.
+//
+// After 20 wrong codes in 24 hours, no code of the address signs in. A link
+// still signs in, because its token has 256 random bits.
 export const verify = fn((tx, args: z.input<typeof VerifyInput>): Verified => {
   const a = parse(VerifyInput, args);
   let email: string;
@@ -79,12 +87,25 @@ export const verify = fn((tx, args: z.input<typeof VerifyInput>): Verified => {
     if (row.expires_at <= tx.now) return { ok: false, reason: "expired" };
     email = row.email;
   } else {
+    const [wrong] = tx.sql<{ count: number }>("SELECT count FROM wrong_codes WHERE email = ? AND since > ?", a.email, tx.now - DAY);
+    if (wrong && wrong.count >= WRONG_CODES_PER_DAY) return { ok: false, reason: "locked" };
     const open = tx.from("codes").select("code_hash", "tries").eq("email", a.email).gt("expires_at", tx.now).all();
     if (open.length === 0) return { ok: false, reason: "expired" };
     const live = open.filter((c) => c.tries < TRIES_PER_CODE);
     if (live.length === 0) return { ok: false, reason: "tries" };
     if (!live.some((c) => c.code_hash === a.code_hash)) {
       tx.sql("UPDATE codes SET tries = tries + 1 WHERE email = ?", a.email);
+      // SQLite reads since and count of the old row for each CASE.
+      tx.sql(
+        `INSERT INTO wrong_codes (email, since, count) VALUES (?, ?, 1)
+         ON CONFLICT (email) DO UPDATE SET
+           count = CASE WHEN since > ? THEN count + 1 ELSE 1 END,
+           since = CASE WHEN since > ? THEN since ELSE excluded.since END`,
+        a.email,
+        tx.now,
+        tx.now - DAY,
+        tx.now - DAY,
+      );
       return { ok: false, reason: "invalid" };
     }
     email = a.email;

@@ -8,7 +8,7 @@ import type { MailboxDO } from "./mailbox";
 import { angle } from "./outbox";
 
 export interface Envelope {
-  // The address of the SMTP MAIL FROM.
+  // The address of the SMTP MAIL FROM. The row keeps it as envelope_from.
   from: string;
   // The address of the mailbox, in lower case.
   to: string;
@@ -86,15 +86,18 @@ export async function receive(
     // A second delivery of the message can arrive while the R2 writes run.
     if (messageId && known(storage.sql, messageId)) return;
     storage.sql.exec(
-      `INSERT INTO messages (id, folder, thread_id, message_id, in_reply_to, refs, from_address, from_name,
+      `INSERT INTO messages (id, folder, thread_id, message_id, in_reply_to, refs, from_address, envelope_from, from_name,
          to_addresses, cc_addresses, reply_to, subject, text, html, attachments, raw_key, created_at)
-       VALUES (?, 'inbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, 'inbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       threadOf(storage.sql, [inReplyTo, ...(refs ?? "").split(/\s+/).reverse()]) ?? id,
       messageId,
       inReplyTo,
       refs,
+      // from_address is the From header, which the sender writes. It names
+      // the person to answer, and it does not prove who sent the message.
       email.from?.address?.toLowerCase() ?? envelope.from.toLowerCase(),
+      envelope.from.toLowerCase(),
       email.from?.name || null,
       JSON.stringify(addresses(email.to, [envelope.to])),
       email.cc?.length ? JSON.stringify(addresses(email.cc, [])) : null,

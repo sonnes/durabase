@@ -20,6 +20,9 @@ type Row = Record<string, SqlStorageValue | unknown>;
 // SQLite in a Durable Object accepts at most 100 bound values in a query.
 const MAX_BINDINGS = 100;
 
+// The most rows of one select for a caller with a policy.
+const MAX_ROWS = 1000;
+
 export function toValue(v: unknown): SqlStorageValue {
   if (v === undefined || v === null) return null;
   if (typeof v === "boolean") return v ? 1 : 0;
@@ -114,6 +117,18 @@ function withRule(where: Fragment, rule: Fragment | null | undefined): Fragment 
   return { sql, bindings: [...where.bindings, ...rule.bindings] };
 }
 
+// The where of an update or a delete: the filters of the caller, the rule of
+// the write, and the select rule. The filters and the returned columns read
+// the rows, so the write changes only the rows that the caller can select,
+// as in Postgres. Else the count of a write tells if a hidden row matches a
+// filter. undefined: the caller can select no row.
+function writeWhere(where: Where, table: TableInfo, guard: Guard | undefined, rule: Fragment | null | undefined): Fragment | undefined {
+  const filters = withRule(buildWhere(where, table, guard), rule);
+  if (!guard) return filters;
+  const read = guard.rule(table, "select");
+  return read ? withRule(filters, read) : undefined;
+}
+
 // The columns of a select. With a guard, "*" means the columns that the
 // caller can read, and a column that a policy refuses is an error.
 function selectColumns(table: TableInfo, columns: string[], guard: Guard | undefined): string[] {
@@ -190,9 +205,10 @@ export function select(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
     for (const [c] of p.order) assertReadable(table, table.column(c), guard);
     query += ` ORDER BY ${p.order.map(([c, d]) => `${quote(table.column(c))} ${d === "desc" ? "DESC" : "ASC"}`).join(", ")}`;
   }
-  if (p.limit !== undefined || p.offset !== undefined) {
+  const limit = guard ? Math.min(p.limit ?? MAX_ROWS, MAX_ROWS) : p.limit;
+  if (limit !== undefined || p.offset !== undefined) {
     query += " LIMIT ? OFFSET ?";
-    bindings.push(p.limit ?? -1, p.offset ?? 0);
+    bindings.push(limit ?? -1, p.offset ?? 0);
   }
 
   const rows: Row[] = exec(sql, query, bindings).toArray();
@@ -264,8 +280,10 @@ export function update(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
   if (guard) for (const s of sets) if (!guard.column(table, s.col, "update")) throw guard.forbidden("update", table, s.col);
   // The rule picks the rows that the caller can change. After the update,
   // each row must still pass it.
-  const where = withRule(buildWhere(p.where, table, guard), rule);
-  const query = `UPDATE ${quote(table.name)} SET ${sets.map((s) => `${quote(s.col)} = ?`).join(", ")}${where.sql}${returningColumns(p.returning, table, guard)}`;
+  const where = writeWhere(p.where, table, guard, rule);
+  const returning = returningColumns(p.returning, table, guard);
+  if (!where) return p.returning ? { rows: [], count: 0 } : { count: 0 };
+  const query = `UPDATE ${quote(table.name)} SET ${sets.map((s) => `${quote(s.col)} = ?`).join(", ")}${where.sql}${returning}`;
   const rows = exec(sql, query, [...sets.map((s) => s.value), ...where.bindings]).toArray();
   if (guard && rule) checkRows(sql, table, rows, rule, guard, "update");
   return p.returning ? { rows, count: rows.length } : { count: rows.length };
@@ -276,8 +294,10 @@ export function remove(sql: SqlStorage, schema: Schema, raw: unknown, guard?: Gu
   const table = schema.table(p.table);
   const rule = guard?.rule(table, "delete");
   if (guard && !rule) throw guard.forbidden("delete", table);
-  const where = withRule(buildWhere(p.where, table, guard), rule);
-  const query = `DELETE FROM ${quote(table.name)}${where.sql}${returningColumns(p.returning, table, guard)}`;
+  const where = writeWhere(p.where, table, guard, rule);
+  const returning = returningColumns(p.returning, table, guard);
+  if (!where) return p.returning ? { rows: [], count: 0 } : { count: 0 };
+  const query = `DELETE FROM ${quote(table.name)}${where.sql}${returning}`;
   const rows = exec(sql, query, where.bindings).toArray();
   dropKeys(table, rows);
   return p.returning ? { rows, count: rows.length } : { count: rows.length };

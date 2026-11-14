@@ -176,7 +176,7 @@ export const Auth = auth({ from: "orders@example.com" });
 
 export default {
   async fetch(request: Request, env: Env) {
-    return (await serve(request, env)) ?? new Response("not found", { status: 404 });
+    return (await serve(request, env, { databases: ["shop"] })) ?? new Response("not found", { status: 404 });
   },
 };
 ```
@@ -191,6 +191,46 @@ export default {
 
 A call over HTTP is `anon`, or `authenticated` after sign-in. Only the policies and the public functions are open to these callers. A table with no policy gives no rows to a select, and refuses each write.
 
+`serve()` takes these options:
+
+| Option | Default | Use |
+|---|---|---|
+| `databases` | No database | The names that `/db/<name>` serves: a list, or a function such as `(name) => name.startsWith("tenant-")`. Each other name gets a 404. |
+| `maxBody` | `1000000` | The largest JSON-RPC body, in bytes. A larger body gets a 413. An upload has the `maxSize` of its bucket. |
+| `bindings` | `DB`, `AUTH`, `FILES`, `FILES_BUCKET`, `DURABASE_LIMIT` | The names of the bindings: `db`, `auth`, `files`, `filesBucket` and `limit`. |
+| `realm` | `main` | The name of the Auth DO. |
+| `secret` | `DURABASE_AUTH_SECRET` | The binding of the secret. |
+| `locationHint` | | Where Cloudflare creates a Database DO, on the first call. |
+
+A call to a new name creates a Durable Object. So `/db` serves only the names of `databases`, and with no `databases` it serves no database. A batch has 100 calls at most.
+
+### Rate Limit
+
+`serve()` counts each request with a [Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/), before it calls a Durable Object. Add the binding `DURABASE_LIMIT` to the Worker:
+
+```jsonc
+// wrangler.jsonc
+{
+  "ratelimits": [
+    { "name": "DURABASE_LIMIT", "namespace_id": "1001", "simple": { "limit": 100, "period": 60 } }
+  ]
+}
+```
+
+- The key of one count is the IP address of the caller, the scheme and the name, such as `203.0.113.7 db/shop`. So each database, each bucket and the sign-in have their own count for one IP address.
+- A caller over the limit gets a 429 with the header `Retry-After: 60` and the JSON-RPC error `-32006`.
+- With no binding, `serve()` limits nothing.
+- Cloudflare counts in each location, so the limit is not exact. The Auth DO keeps the exact limits of one email address.
+
+`limitRequest()` gives the same limit to a route of the app. It returns the 429 answer, or `undefined` if the request can go on:
+
+```ts
+import { limitRequest } from "@durabaseio/sdk";
+
+const refused = await limitRequest(request, env.DURABASE_LIMIT, "subscribe");
+if (refused) return refused;
+```
+
 ## Auth
 
 A customer signs in with a link or a 6-digit code from one email. The Mailbox DO of the `from` address sends the email.
@@ -204,7 +244,9 @@ await db.auth.getUser();
 await db.auth.signOut();
 ```
 
-The link signs in by itself and goes to the path in `next`. The default is `/`, and a path of another site also gives `/`. On another device, the customer types the code. `verifyOtp` names the code `code`, and supabase-js names it `token`.
+The link signs in by itself and goes to the path in `next`. The default is `/`, and a path of another site also gives `/`. `verifyOtp` names the code `code`, and supabase-js names it `token`.
+
+The link signs in only the browser that asked for the email. `signInWithOtp` gives that browser the cookie `__Host-durabase-signin` for 10 minutes, and the link needs it. So a person cannot sign another person in to an account with a link. In another browser or on another device, the link goes to `next` with `?auth_error=browser` and stays open, and the customer types the code. The other values of `auth_error` are `invalid` and `expired`.
 
 `auth()` stores each email in lower case, and `$auth.email` is in lower case. Store each email of your tables in lower case too, so that a rule such as `{ customer_email: { eq: $auth.email } }` matches.
 
@@ -221,13 +263,15 @@ npx wrangler secret put DURABASE_AUTH_SECRET
 ```
 
 - The Worker keeps the session in two HttpOnly cookies, `__Host-durabase-access` and `__Host-durabase-refresh`. Script on the page cannot read them.
-- The access token is an HS256 JWT for 1 hour, signed with `DURABASE_AUTH_SECRET`. The Worker checks it with no call to a Durable Object.
+- The access token is an HS256 JWT for 5 minutes, signed with `DURABASE_AUTH_SECRET`. The Worker checks it with no call to a Durable Object. After a sign-out, a copy of the access token works until the 5 minutes end.
+- `serve()`, `signValue()` and `verifyValue()` throw an error for a secret of fewer than 32 characters.
 - When the access token expires, the Worker gets a new one from the Auth DO with the refresh token. A session lasts 30 days.
 - The refresh token of the step before works for 60 seconds more, for two tabs that refresh together. An older refresh token is a copy, so it ends the session.
 - The cookies need HTTPS, also in local development. Run `wrangler dev --local-protocol https`.
 - A POST with the cookie must come from a page of the site. Else the call is `anon`.
 - A client that is not a browser can send the access token in an `Authorization: Bearer` header.
-- The Auth DO keeps only the hashes of the link and the code. A code stops after 10 minutes, or after 5 wrong tries. One address gets 5 emails in 1 hour at most.
+- The Auth DO keeps only the hashes of the link and the code. A code stops after 10 minutes, or after 5 wrong tries. One address gets 5 emails in 1 hour at most. After the fifth email, the codes of the sent emails still sign in.
+- After 20 wrong codes in 24 hours for one address, `verifyOtp` fails with the reason `locked` until the 24 hours end. The link of an email still signs in.
 - `env.AUTH.get(env.AUTH.idFromName("main")).setGroups(userId, ["staff"])` sets the groups of a user. The next access token carries them.
 
 A function reads the caller from `tx.auth`:
@@ -287,10 +331,12 @@ The service role skips the policies. A function also skips them.
 
 | Call | Policy |
 |---|---|
-| A select | The rule filters the rows. With no rule, the result is empty. |
+| A select | The rule filters the rows. With no rule, the result is empty. One select gives 1000 rows at most. |
 | An insert | Each new row must match the rule. |
-| An update | The rule picks the rows. Each changed row must still match the rule. |
-| A delete | The rule picks the rows. |
+| An update | The `update` rule and the `select` rule pick the rows. Each changed row must still match the `update` rule. |
+| A delete | The `delete` rule and the `select` rule pick the rows. |
+
+An update or a delete changes only the rows that the caller can select, as in Postgres. With no `select` rule, it changes no row and its count is 0.
 
 If a write does not match its rule, the call fails with `-32005`, and SQLite rolls back the call or the batch.
 
@@ -331,7 +377,9 @@ const { data: link } = await printables.createSignedUrl("atlas/india.pdf", { exp
 // "https://example.com/files/printables/atlas/india.pdf?v=…&exp=…&sig=…"
 ```
 
-- A download from a public bucket needs no policy. `list` on that bucket still needs the `select` rule. A URL with the version needs no call to the Durable Object, and a cache can keep it for 1 year.
+- A download from a public bucket needs no policy. `list` on that bucket still needs the `select` rule. A cache can keep a URL with the version for 1 year.
+- If you make a public bucket private, each URL of its files needs the `select` rule after the deploy. A cache can still have a copy of a file from the time that the bucket was public.
+- `list` gives 100 files by default, and 1000 files at most with `limit`.
 - A signed link needs no call to the Durable Object. A new upload or a remove of the file stops the link.
 - A download of a private file needs the `select` rule.
 - Each download has the headers `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so an uploaded HTML file cannot run script on the site.
@@ -388,6 +436,8 @@ await mail.rpc("reply", { id: inbox![0].id, text: "We sent it today." });
 - An error that is the same on each try, such as `E_RECIPIENT_SUPPRESSED` or `E_HEADER_NOT_ALLOWED`, moves the message to `failed` at once.
 - `reply()` sets `In-Reply-To` and `References`, so the reply stays in the thread.
 - `send()` takes `headers`. Email Service accepts the `List-*` headers, `Precedence`, `Auto-Submitted`, and each `X-*` header. `send()` refuses each other header.
+- `send()` and `reply()` refuse a line break in the subject, in a name and in a header value.
+- `from_address` of an inbound message is the address of the `From` header, which the sender writes. `envelope_from` is the address of the SMTP envelope (`MAIL FROM`). Neither address proves who wrote the message, so do not give access by `from_address`.
 
 A newsletter gives each email a link that unsubscribes with one click. `signValue()` signs the address with a secret of the Worker, so the link needs no stored token:
 
@@ -446,13 +496,17 @@ The Durable Object accepts only the table and column names of its schema. Each v
 | -32003 | The function threw an error. |
 | -32004 | `single()` got no row, or more than one row. |
 | -32005 | A policy refused the call. |
+| -32006 | The caller sent too many requests. |
 | -32603 | An internal error. |
+
+A caller over HTTP gets a fixed message for `-32000`, `-32002` and `-32603`. If a function throws an error that is not a `DurabaseError`, the caller gets `the function <name> failed`. The message of SQLite or of the exception goes to the log of the Worker. To give a message to a caller over HTTP, throw a `DurabaseError` in the function. Code with a binding gets each message.
 
 ## Limits
 
 - `db diff` uses [sqldef](https://github.com/sqldef/sqldef). SQLite cannot change a CHECK constraint or the type of a column with `ALTER TABLE`, and `db diff` writes no migration for these changes.
 - There are no API keys. Code with a binding is the service role.
-- An email scanner that opens the sign-in link uses up the link and the code of that email. The customer must then ask for a new email.
+- The sign-in link works only in the browser that asked for the email. In each other browser, the customer types the code.
+- After 20 wrong codes for one address, the codes of that address do not sign in for 24 hours. A person who knows the address can cause this lock. The link still signs in.
 - A Durable Object holds one SQLite database. One name is one database.
 
 ## Development

@@ -18,4 +18,10 @@ describe("signValue", () => {
     expect(await verifyValue(`${secret}x`, "confirm:asha@example.com", signature)).toBe(false);
     expect(await verifyValue(secret, "confirm:asha@example.com", "not base64!")).toBe(false);
   });
+
+  it("needs a secret of 32 characters or more", async () => {
+    const short = "x".repeat(31);
+    await expect(signValue(short, "confirm:asha@example.com")).rejects.toThrow("the secret must have 32 characters or more");
+    await expect(verifyValue(short, "confirm:asha@example.com", "AAAA")).rejects.toThrow("the secret must have 32 characters or more");
+  });
 });

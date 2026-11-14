@@ -139,6 +139,11 @@ export function files(options: FilesOptions) {
       });
     }
 
+    // True if a download from the bucket needs no policy.
+    async isPublic(bucket: string): Promise<boolean> {
+      return Object.hasOwn(options.buckets, bucket) && options.buckets[bucket].public === true;
+    }
+
     // The row of one file, if the caller can read it.
     async head(auth: Auth, a: { bucket: string; name: string }): Promise<Outcome<FileRow | null>> {
       return this.#run(() => {
@@ -151,7 +156,8 @@ export function files(options: FilesOptions) {
       });
     }
 
-    // The files with a name that starts with prefix, in name order.
+    // The files with a name that starts with prefix, in name order: 100 by
+    // default, and 1 to 1000 with a limit.
     async list(auth: Auth, a: { bucket: string; prefix?: string; limit?: number; offset?: number }): Promise<Outcome<FileRow[]>> {
       return this.#run(() => {
         this.#bucket(a.bucket);
@@ -163,7 +169,9 @@ export function files(options: FilesOptions) {
         const rule = this.#ruleSql(auth, "select", a.bucket);
         if (rule) where.push(rule);
         const sql = `SELECT * FROM objects WHERE ${where.map((w) => `(${w.sql})`).join(" AND ")} ORDER BY name LIMIT ? OFFSET ?`;
-        const bindings = [...where.flatMap((w) => w.bindings), Math.min(a.limit ?? 100, LIST_LIMIT), a.offset ?? 0];
+        const limit = Math.min(Math.max(Math.trunc(a.limit ?? 100) || 1, 1), LIST_LIMIT);
+        const offset = Math.max(Math.trunc(a.offset ?? 0) || 0, 0);
+        const bindings = [...where.flatMap((w) => w.bindings), limit, offset];
         return this.ctx.storage.sql.exec<FileRow & Record<string, SqlStorageValue>>(sql, ...bindings).toArray();
       });
     }

@@ -30,6 +30,15 @@ create table codes (
 );
 create index codes_email on codes (email, created_at);
 
+-- One row for each address that got a wrong code in the last 24 hours. After
+-- 20 wrong codes, no code of the address signs in until the 24 hours end.
+create table wrong_codes (
+  email text primary key,
+  -- The time of the first wrong code of the 24 hours.
+  since integer not null,
+  count integer not null
+);
+
 -- One row for each signed-in device. The refresh token holds the id and a
 -- counter. Each refresh adds 1 to the counter.
 create table sessions (

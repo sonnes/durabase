@@ -173,6 +173,37 @@ describe("downloads", () => {
   });
 });
 
+describe("a list over HTTP", () => {
+  it("gives 1 file at least and 1000 files at most", async () => {
+    const dir = `avatars/${crypto.randomUUID().slice(0, 8)}`;
+    await media.upload(`${dir}/a.txt`, "a", { contentType: "text/plain" });
+    await media.upload(`${dir}/b.txt`, "b", { contentType: "text/plain" });
+    expect((await rpc("media", "list", { prefix: dir })).result).toHaveLength(2);
+    expect((await rpc("media", "list", { prefix: dir, limit: -1 })).result).toHaveLength(1);
+    expect((await rpc("media", "list", { prefix: dir, limit: 0.5 })).result).toHaveLength(1);
+    expect((await rpc("media", "list", { prefix: dir, limit: 1e9, offset: -5 })).result).toHaveLength(2);
+  });
+});
+
+describe("a bucket that was public", () => {
+  // The object in R2 has the mark of a public file, from the time that the
+  // bucket was public. The bucket printables is private now.
+  it("serves the old URL of a file only with the select rule", async () => {
+    const name = `atlas/${crypto.randomUUID().slice(0, 8)}.pdf`;
+    const { data } = await printables.upload(name, "%PDF", { contentType: "application/pdf" });
+    await env.FILES_BUCKET.put(`printables/${name}/${data!.version}`, "%PDF", {
+      httpMetadata: { contentType: "application/pdf" },
+      customMetadata: { public: "1" },
+    });
+    const url = `${ORIGIN}/files/printables/${name}?v=${data!.version}`;
+
+    expect((await SELF.fetch(url)).status).toBe(404);
+    const buyer = await SELF.fetch(url, { headers: { authorization: await bearer("asha", ["buyer"]) } });
+    expect(buyer.status).toBe(200);
+    expect(buyer.headers.get("cache-control")).toBe("private, no-store");
+  });
+});
+
 describe("the files client over HTTP", () => {
   it("uploads and lists with the session of the page", async () => {
     const auth = await bearer("asha");

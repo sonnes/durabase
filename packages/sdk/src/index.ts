@@ -4,6 +4,7 @@ export { createFn, fn, type DurabaseFunction, type FunctionsOf, type Tx } from "
 export { migrate, type Migration } from "./migrate";
 export { DurabaseError, ErrorCode, type RpcError, type RpcRequest, type RpcResponse } from "./protocol";
 export { serve, type ServeOptions } from "./serve";
+export { limitRequest, type Limiter } from "./limit";
 export { files, type Bucket, type FileRow, type FilesDO, type FilesOptions } from "./files/files";
 export { FilesClient, type UploadOptions } from "./files/client";
 export { auth, type AuthDO, type AuthOptions, type SignInEmail } from "./auth/auth";

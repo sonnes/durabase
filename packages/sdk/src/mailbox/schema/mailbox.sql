@@ -16,7 +16,12 @@ create table messages (
   in_reply_to text,
   -- The References header: the Message-IDs of the thread, with spaces.
   refs text,
+  -- The address of the From header for an inbound message, and the address of
+  -- the mailbox for an outbound message. The sender of an inbound message
+  -- writes the From header, so it does not prove who sent the message.
   from_address text not null,
+  -- The address of the SMTP MAIL FROM of an inbound message.
+  envelope_from text,
   from_name text,
   -- JSON arrays of addresses.
   to_addresses text not null,

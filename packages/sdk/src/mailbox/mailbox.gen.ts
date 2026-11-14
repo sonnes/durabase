@@ -30,6 +30,7 @@ export type Tables = {
       created_at: number;
       sent_at: number | null;
       headers: string | null;
+      envelope_from: string | null;
     };
     insert: {
       id: string;
@@ -56,6 +57,7 @@ export type Tables = {
       created_at: number;
       sent_at?: number | null;
       headers?: string | null;
+      envelope_from?: string | null;
     };
     update: {
       id?: string;
@@ -82,6 +84,7 @@ export type Tables = {
       created_at?: number;
       sent_at?: number | null;
       headers?: string | null;
+      envelope_from?: string | null;
     };
     relationships: Record<never, never>;
   };
@@ -109,6 +112,13 @@ export const migrations: Migration[] = [
     name: "headers",
     statements: [
       "ALTER TABLE \"messages\" ADD COLUMN \"headers\" text",
+    ],
+  },
+  {
+    version: 3,
+    name: "envelope_from",
+    statements: [
+      "ALTER TABLE \"messages\" ADD COLUMN \"envelope_from\" text",
     ],
   },
 ];

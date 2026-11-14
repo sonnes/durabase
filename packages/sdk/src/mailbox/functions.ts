@@ -15,7 +15,11 @@ export const MAX_RECIPIENTS = 50;
 // A References header keeps the last 20 Message-IDs of the thread.
 const MAX_REFERENCES = 20;
 
-const Address = z.union([z.string().email(), z.object({ email: z.string().email(), name: z.string().optional() })]);
+// A value that goes into a header of the message. A line break in it starts
+// a new header, such as a Bcc.
+const Line = z.string().refine((v) => !/[\r\n]/.test(v), "a subject, a name and a header cannot have a line break");
+
+const Address = z.union([z.string().email(), z.object({ email: z.string().email(), name: Line.optional() })]);
 export type Address = z.infer<typeof Address>;
 
 // The headers that Email Service accepts in send(), other than the headers of
@@ -42,7 +46,7 @@ function allowedHeader(name: string): boolean {
 }
 
 const Headers = z
-  .record(z.string(), z.string().max(2048))
+  .record(z.string(), Line.max(2048))
   .refine((h) => Object.keys(h).every(allowedHeader), "a header must be a List-* header, Precedence, Auto-Submitted or X-*");
 
 const SendInput = z
@@ -51,8 +55,8 @@ const SendInput = z
     cc: z.array(Address).optional(),
     replyTo: z.string().email().optional(),
     // The address of the sender is the address of the mailbox.
-    fromName: z.string().optional(),
-    subject: z.string().max(998),
+    fromName: Line.optional(),
+    subject: Line.max(998),
     text: z.string().optional(),
     html: z.string().optional(),
     // A second send with the same key queues nothing.
@@ -69,7 +73,7 @@ const ReplyInput = z
     html: z.string().optional(),
     // Also send to the other recipients of the message.
     all: z.boolean().optional(),
-    fromName: z.string().optional(),
+    fromName: Line.optional(),
   })
   .refine((a) => a.text !== undefined || a.html !== undefined, "a message needs text or html");
 export type ReplyInput = z.input<typeof ReplyInput>;
@@ -169,6 +173,8 @@ export const reply = fn((tx, args: ReplyInput): Queued => {
   });
   checkRecipients(to, cc);
 
+  // The subject of an inbound message can have a line break in an encoded word.
+  const subject = parent.subject.replace(/[\r\n]+/g, " ");
   const refs = [...(parent.refs ?? "").split(/\s+/), parent.message_id ?? ""].filter(Boolean).slice(-MAX_REFERENCES);
 
   return queue(tx, undefined, {
@@ -178,7 +184,7 @@ export const reply = fn((tx, args: ReplyInput): Queued => {
     from_name: a.fromName ?? null,
     to_addresses: JSON.stringify(to),
     cc_addresses: cc.length ? JSON.stringify(cc) : null,
-    subject: /^re:/i.test(parent.subject) ? parent.subject : `Re: ${parent.subject}`,
+    subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
     text: a.text ?? null,
     html: a.html ?? null,
   });

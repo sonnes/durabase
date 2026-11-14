@@ -8,6 +8,7 @@ declare global {
       DURABASE_AUTH_SECRET: string;
       FILES: DurableObjectNamespace<import("../src").FilesDO>;
       FILES_BUCKET: R2Bucket;
+      DURABASE_LIMIT: import("../src").Limiter;
     }
   }
 }
